@@ -43,7 +43,9 @@ delete media, but later scans will fall back to folder-based matching.
 Stash Dock prefers a downloaded image. For video-only creators it first uses a
 Stash-generated scene screenshot, then falls back to extracting a frame roughly
 one-third into a local video with FFmpeg. Generated frames are cached under
-`/config/avatars`. Run **Manual Stash sync** after the scene scan completes.
+`/config/avatars`. This fallback applies to mixed gallery sites such as Erome
+as well as video-first sites. Run **Manual Stash sync** after the scene scan
+completes.
 
 ## A site stopped working
 

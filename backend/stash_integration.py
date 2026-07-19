@@ -433,13 +433,26 @@ def organize(
                          "image_path": "default=true"}
             by_name[creator.casefold()] = performer
             stats["performers_created"] += 1
+        matching = album_scenes.get((creator, album), [])
         if "default=true" in (performer.get("image_path") or ""):
-            if image := local_avatar(download_root, creator):
+            image = local_avatar(download_root, creator)
+            if not image:
+                screenshots = [
+                    value for value in
+                    (screenshot_avatar(scene, api_key) for scene in matching)
+                    if value
+                ]
+                image = (
+                    random.SystemRandom().choice(screenshots) if screenshots
+                    else video_frame_avatar(
+                        matching, download_root, avatar_cache, creator
+                    )
+                )
+            if image:
                 client.set_performer_image(performer["id"], image)
                 performer["image_path"] = "assigned"
                 stats["avatars_updated"] += 1
         gallery = album_galleries.get((creator, album))
-        matching = album_scenes.get((creator, album), [])
         for scene in matching:
             stats["scenes_updated"] += int(
                 client.update_scene(scene, performer["id"], gallery["id"] if gallery else None)
