@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
 import json
 import os
 import queue
 import re
+import secrets
 import shlex
 import shutil
 import socket
@@ -17,7 +20,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -42,7 +45,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.2.0")
+app = FastAPI(title="Stash Dock", version="0.3.0")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -80,6 +83,9 @@ DEFAULT_SETTINGS = {
     "video_hosts": sorted(VIDEO_HOST_HINTS),
     "site_labels": {"erome": "Erome", "pornhub": "Pornhub",
                     "xvideos": "XVideos", "xnxx": "XNXX"},
+    "integration_api_key_hash": "",
+    "integration_api_key_last_four": "",
+    "integration_api_key_created_at": 0,
 }
 
 
@@ -107,7 +113,25 @@ def public_settings() -> dict:
     settings = load_settings()
     settings["api_key"] = ""
     settings["api_key_configured"] = bool(load_settings().get("api_key"))
+    settings["integration_api_configured"] = bool(
+        settings.pop("integration_api_key_hash", "")
+    )
     return settings
+
+
+def require_integration_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+) -> None:
+    supplied = x_api_key or ""
+    if not supplied and authorization and authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+    expected = load_settings().get("integration_api_key_hash", "")
+    if not expected or not supplied:
+        raise HTTPException(401, "A valid Stash Dock API key is required.")
+    digest = hashlib.sha256(supplied.encode()).hexdigest()
+    if not hmac.compare_digest(digest, expected):
+        raise HTTPException(401, "A valid Stash Dock API key is required.")
 
 
 def db() -> sqlite3.Connection:
@@ -438,8 +462,85 @@ def update_settings(request: SettingsRequest) -> dict:
         for key, value in updated["site_labels"].items()
         if key.strip() and value.strip()
     }
+    for key in (
+        "integration_api_key_hash", "integration_api_key_last_four",
+        "integration_api_key_created_at",
+    ):
+        updated[key] = current.get(key, DEFAULT_SETTINGS[key])
     save_settings(updated)
     return public_settings()
+
+
+@app.post("/api/settings/integration-key")
+def generate_integration_key() -> dict:
+    plain_key = "sd_" + secrets.token_urlsafe(32)
+    settings = load_settings()
+    settings["integration_api_key_hash"] = hashlib.sha256(
+        plain_key.encode()
+    ).hexdigest()
+    settings["integration_api_key_last_four"] = plain_key[-4:]
+    settings["integration_api_key_created_at"] = int(time.time())
+    save_settings(settings)
+    return {
+        "api_key": plain_key,
+        "last_four": plain_key[-4:],
+        "created_at": settings["integration_api_key_created_at"],
+        "warning": "Copy this key now. It will not be shown again.",
+    }
+
+
+@app.delete("/api/settings/integration-key")
+def revoke_integration_key() -> dict:
+    settings = load_settings()
+    settings["integration_api_key_hash"] = ""
+    settings["integration_api_key_last_four"] = ""
+    settings["integration_api_key_created_at"] = 0
+    save_settings(settings)
+    return {"revoked": True}
+
+
+@app.get("/api/integrations/status")
+def integration_status(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    require_integration_key(x_api_key, authorization)
+    return {**health(), "version": app.version}
+
+
+@app.post("/api/integrations/download", status_code=202)
+def integration_download(
+    request: DownloadRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    require_integration_key(x_api_key, authorization)
+    return create_job(request)
+
+
+@app.get("/api/integrations/jobs/{job_id}")
+def integration_job(
+    job_id: str,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    require_integration_key(x_api_key, authorization)
+    with db() as connection:
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Job not found.")
+    return dict(row)
+
+
+@app.post("/api/integrations/stash/sync", status_code=202)
+def integration_sync(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    require_integration_key(x_api_key, authorization)
+    return sync_stash()
 
 
 @app.post("/api/settings/test")
@@ -490,6 +591,9 @@ def diagnostics() -> dict:
         "config_writable": os.access(CONFIG_ROOT, os.W_OK),
         "stash_url": settings["stash_url"],
         "stash_configured": bool(settings.get("api_key")),
+        "integration_api_configured": bool(
+            settings.get("integration_api_key_hash")
+        ),
         "sync_enabled": settings.get("sync_enabled", False),
         "queue": jobs_queue.qsize(),
         "stash_queue": stash_queue.qsize(),

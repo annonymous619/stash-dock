@@ -27,6 +27,7 @@ time enjoying a tidy library.
   borrow a Stash preview or capture a tasteful frame from a video
 - Write-only Stash API key field
 - Connection test, manual sync, and redacted diagnostics export
+- A generated, revocable integration key for other Docker apps and automations
 - Persistent history and duplicate-download archives
 
 ## A little personality for every creator
@@ -90,6 +91,10 @@ identified, the configured unknown-creator label is used.
 Start with [Troubleshooting](docs/TROUBLESHOOTING.md). The Diagnostics page can
 download a redacted JSON report suitable for a GitHub issue. Never post Stash
 API keys, cookies, passwords, or authenticated URLs.
+
+Developers and automation tools can use the
+[Integration API](docs/INTEGRATION-API.md) to submit downloads, check jobs, and
+request a Stash sync.
 
 ## Community Apps
 

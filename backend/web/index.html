@@ -83,6 +83,20 @@
           <label for="video-hosts">Video-first sites <span class="hint">one hostname per line</span></label>
           <textarea id="video-hosts" rows="7"></textarea>
         </section>
+        <section class="panel settings-card integration-card">
+          <p class="card-number">04</p><h3>Connect other apps</h3>
+          <p class="hint integration-copy">Generate a private Stash Dock key for another Docker app, script, or automation. It can submit downloads, check jobs, and request a Stash sync.</p>
+          <p id="integration-key-state" class="key-state">No integration key generated</p>
+          <div class="integration-buttons">
+            <button type="button" id="generate-integration-key" class="quiet">Generate new key</button>
+            <button type="button" id="revoke-integration-key" class="quiet danger">Revoke key</button>
+          </div>
+          <div id="generated-key-wrap" class="generated-key" hidden>
+            <label for="generated-key">Copy this now — it is shown only once</label>
+            <div class="copy-row"><input id="generated-key" type="text" readonly><button type="button" id="copy-integration-key" class="quiet">Copy</button></div>
+          </div>
+          <p class="hint">Send it as <code>X-API-Key</code> or <code>Authorization: Bearer …</code>. Keep this WebUI behind your trusted network or authenticated tunnel.</p>
+        </section>
         <div class="settings-actions">
           <button type="submit" class="primary">Save settings</button>
           <button type="button" id="test-stash" class="quiet">Test Stash connection</button>

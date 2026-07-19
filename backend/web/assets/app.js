@@ -71,6 +71,10 @@ async function loadSettings() {
   $("#gallery-hosts").value = settings.gallery_hosts.join("\n");
   $("#video-hosts").value = settings.video_hosts.join("\n");
   $("#site-labels").value = Object.entries(settings.site_labels).map(([key,value]) => `${key}=${value}`).join("\n");
+  $("#integration-key-state").textContent = settings.integration_api_configured
+    ? `Active key ending in ${settings.integration_api_key_last_four}`
+    : "No integration key generated";
+  $("#revoke-integration-key").disabled = !settings.integration_api_configured;
 }
 
 $("#settings-form").addEventListener("submit", async event => {
@@ -105,11 +109,36 @@ $("#sync-now").addEventListener("click", async () => {
   loadJobs();
 });
 
+$("#generate-integration-key").addEventListener("click", async () => {
+  const response = await fetch("/api/settings/integration-key", {method:"POST"});
+  const result = await response.json();
+  if (!response.ok) return message($("#settings-message"), result.detail || "Could not generate a key.");
+  $("#generated-key").value = result.api_key;
+  $("#generated-key-wrap").hidden = false;
+  message($("#settings-message"), "New integration key generated. Copy it now.", true);
+  loadSettings();
+});
+
+$("#copy-integration-key").addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("#generated-key").value);
+  message($("#settings-message"), "Integration key copied.", true);
+});
+
+$("#revoke-integration-key").addEventListener("click", async () => {
+  const response = await fetch("/api/settings/integration-key", {method:"DELETE"});
+  if (!response.ok) return message($("#settings-message"), "Could not revoke the key.");
+  $("#generated-key").value = "";
+  $("#generated-key-wrap").hidden = true;
+  message($("#settings-message"), "Integration key revoked.", true);
+  loadSettings();
+});
+
 async function loadDiagnostics() {
   const result = await (await fetch("/api/diagnostics")).json();
   const checks = [
     ["Stash API", result.stash_configured ? "Configured" : "Missing key", result.stash_configured],
     ["Automatic sync", result.sync_enabled ? "Enabled" : "Disabled", result.sync_enabled],
+    ["Integration API", result.integration_api_configured ? "Key active" : "No key", result.integration_api_configured],
     ["Downloads volume", result.downloads_writable ? "Writable" : "Read only", result.downloads_writable],
     ["Config volume", result.config_writable ? "Writable" : "Read only", result.config_writable],
     ["gallery-dl", result.gallery_dl, !result.gallery_dl.startsWith("unavailable")],
