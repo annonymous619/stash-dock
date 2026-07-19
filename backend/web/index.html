@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Stash Dock</title>
+  <meta name="theme-color" content="#10130f">
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
@@ -12,6 +14,7 @@
       <div class="brand"><div class="mark">SD</div><div><p class="eyebrow">UNIFIED MEDIA INTAKE</p><h1>Stash Dock</h1></div></div>
       <nav aria-label="Primary">
         <button class="nav-item active" data-view="downloads">Downloads</button>
+        <button class="nav-item" data-view="manage">Manage</button>
         <button class="nav-item" data-view="settings">Settings</button>
         <button class="nav-item" data-view="diagnostics">Diagnostics</button>
       </nav>
@@ -28,6 +31,7 @@
         <form id="download-form" class="panel">
           <label for="url">Media or creator URL</label>
           <input id="url" name="url" type="url" placeholder="https://example.com/creator/post" required>
+          <div class="selectors"><label>Recipe<select id="recipe"></select></label><label>Library<select id="library"></select></label></div>
           <div class="mode-row">
             <label><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
             <label><input type="radio" name="mode" value="gallery"><span>Gallery</span></label>
@@ -43,6 +47,18 @@
         <div class="section-heading"><div><p class="eyebrow">DOWNLOAD QUEUE</p><h3>Recent jobs</h3></div><button id="refresh" class="quiet">Refresh</button></div>
         <div id="job-list" class="job-list"><p class="empty">No downloads yet.</p></div>
       </section>
+    </section>
+
+    <section id="manage-view" class="view">
+      <div class="page-intro"><p class="eyebrow lime">MEDIA CONTROL</p><h2>Know what you have.</h2><p>Index existing folders, review duplicate evidence, inspect storage candidates, and extend routing without executable plugins.</p></div>
+      <div class="manage-actions">
+        <button id="import-library" class="primary">Index existing library</button>
+        <button id="scan-duplicates" class="quiet">Find duplicates</button>
+        <button id="review-storage" class="quiet">Review storage</button>
+        <button id="load-plugins" class="quiet">Inspect plugins</button>
+      </div>
+      <p id="manage-message" class="message"></p>
+      <div id="manage-results" class="review-grid"><p class="empty">Choose an action above. Nothing here deletes files.</p></div>
     </section>
 
     <section id="settings-view" class="view">

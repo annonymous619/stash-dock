@@ -12,7 +12,15 @@ document.querySelectorAll(".nav-item").forEach(button => button.addEventListener
   $(`#${button.dataset.view}-view`).classList.add("active");
   if (button.dataset.view === "settings") loadSettings();
   if (button.dataset.view === "diagnostics") loadDiagnostics();
+  if (button.dataset.view === "manage") loadAdvanced();
 }));
+
+let advanced = null;
+async function loadAdvanced() {
+  advanced = await (await fetch("/api/advanced")).json();
+  $("#recipe").innerHTML = advanced.recipes.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+  $("#library").innerHTML = advanced.libraries.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+}
 
 async function loadJobs() {
   try {
@@ -40,7 +48,8 @@ $("#download-form").addEventListener("submit", async event => {
   button.disabled = true;
   try {
     const response = await fetch("/api/jobs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
-      url: $("#url").value, mode: new FormData(event.currentTarget).get("mode"), authorized: $("#authorized").checked
+      url: $("#url").value, mode: new FormData(event.currentTarget).get("mode"), authorized: $("#authorized").checked,
+      recipe_id: $("#recipe").value || "original", library_id: $("#library").value || "stash"
     })});
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || "Could not start the download.");
@@ -152,5 +161,25 @@ async function loadDiagnostics() {
 
 $("#refresh").addEventListener("click", loadJobs);
 $("#reload-diagnostics").addEventListener("click", loadDiagnostics);
+function bytes(value) { return value > 1073741824 ? `${(value/1073741824).toFixed(1)} GB` : `${(value/1048576).toFixed(1)} MB`; }
+$("#import-library").addEventListener("click", async () => {
+  message($("#manage-message"), "Indexing media…");
+  const result = await (await fetch("/api/library/import", {method:"POST"})).json();
+  message($("#manage-message"), `Indexed ${result.indexed} media files. Found ${result.exact_matches} exact and ${result.probable_matches} probable matches.`, true);
+});
+$("#scan-duplicates").addEventListener("click", async () => {
+  const result = await (await fetch("/api/duplicates")).json();
+  $("#manage-results").innerHTML = result.groups.length ? result.groups.map(group => `<article class="review-card"><span class="status ${group.kind==="exact"?"failed":"queued"}">${esc(group.kind)}</span><h3>${group.files.length} matching files</h3><p class="hint">${group.kind==="exact" ? `${bytes(group.reclaimable_bytes)} safely reviewable` : "Same normalized title and nearly identical size"}</p><ul>${group.files.map(file=>`<li>${esc(file.path)} · ${bytes(file.size)}</li>`).join("")}</ul></article>`).join("") : '<p class="empty">No duplicate groups found.</p>';
+});
+$("#review-storage").addEventListener("click", async () => {
+  const result = await (await fetch("/api/storage/candidates")).json();
+  $("#manage-results").innerHTML = `<article class="review-card safety"><h3>Review-only storage policy</h3><p>${esc(result.note)}</p></article>` + (result.candidates.length ? result.candidates.map(item=>`<article class="review-card"><h3>${esc(item.path)}</h3><p>${bytes(item.size)} · ${esc(item.reason)}</p></article>`).join("") : '<p class="empty">No files match the current policy.</p>');
+});
+$("#load-plugins").addEventListener("click", async () => {
+  const result = await (await fetch("/api/plugins")).json();
+  $("#manage-results").innerHTML = `<article class="review-card safety"><h3>Safe plugin model</h3><p>${esc(result.format)}</p></article>` + (result.plugins.length ? result.plugins.map(item=>`<article class="review-card"><h3>${esc(item.name || item.file)}</h3><p>${esc(item.description || item.error || "Ready")}</p></article>`).join("") : '<p class="empty">No plugin manifests in /config/plugins yet.</p>');
+});
+loadAdvanced();
 loadJobs();
 setInterval(loadJobs, 4000);
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/service-worker.js");

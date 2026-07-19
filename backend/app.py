@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException
@@ -26,6 +26,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from stash_integration import synchronize
+from advanced import (
+    advanced_settings, duplicate_groups, emit_webhooks, index_paths,
+    init_advanced_storage, load_plugins, safe_library_root, storage_candidates,
+)
 
 APP_ROOT = Path(__file__).resolve().parent
 WEB_ROOT = APP_ROOT / "web"
@@ -51,7 +55,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.4.1")
+app = FastAPI(title="Stash Dock", version="0.5.0")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -62,6 +66,16 @@ class DownloadRequest(BaseModel):
     url: str = Field(min_length=8, max_length=4096)
     mode: Literal["auto", "gallery", "video", "audio"] = "auto"
     authorized: bool
+    recipe_id: str = Field(default="original", max_length=80)
+    library_id: str = Field(default="stash", max_length=80)
+
+
+class AdvancedSettingsRequest(BaseModel):
+    recipes: list[dict[str, Any]] = Field(max_length=50)
+    libraries: list[dict[str, Any]] = Field(max_length=30)
+    webhooks: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
+    storage_policy: dict[str, Any]
+    plugins_enabled: bool = True
 
 
 class SettingsRequest(BaseModel):
@@ -122,6 +136,9 @@ def public_settings() -> dict:
     settings["integration_api_configured"] = bool(
         settings.pop("integration_api_key_hash", "")
     )
+    if isinstance(settings.get("advanced"), dict):
+        for hook in settings["advanced"].get("webhooks", []):
+            hook.pop("secret", None)
     return settings
 
 
@@ -162,6 +179,7 @@ def init_storage() -> None:
                 error TEXT, log TEXT NOT NULL DEFAULT ''
             )"""
         )
+        init_advanced_storage(connection)
 
 
 def public_http_url(raw: str) -> tuple[str, str]:
@@ -217,13 +235,18 @@ def append_log(job_id: str, line: str) -> None:
         )
 
 
-def job_command(engine: str, url: str, host: str, mode: str) -> list[str]:
+def job_command(engine: str, url: str, host: str, mode: str,
+                recipe_id: str = "original", library_id: str = "stash") -> list[str]:
     settings = load_settings()
+    advanced = advanced_settings(settings)
+    recipe = next((item for item in advanced["recipes"] if item.get("id") == recipe_id), advanced["recipes"][0])
+    root = safe_library_root(DOWNLOAD_ROOT, advanced, library_id)
     site = site_name(host)
     label = settings.get("site_labels", {}).get(site, site)
     if engine == "gallery-dl":
         return [
             "gallery-dl", "--config", str(CONFIG_ROOT / "gallery-dl.conf"),
+            "--directory", str(root),
             url,
         ]
     creator = (
@@ -238,7 +261,7 @@ def job_command(engine: str, url: str, host: str, mode: str) -> list[str]:
         "creator_site_title": (creator, label, title),
         "creator_title": (creator, title),
     }[layout]
-    template = str(DOWNLOAD_ROOT.joinpath(*parts) / f"{title}.%(ext)s")
+    template = str(root.joinpath(*parts) / f"{title}.%(ext)s")
     command = [
         "yt-dlp", "--newline", "--no-progress", "--continue",
         "--no-overwrites", "--download-archive", str(CONFIG_ROOT / "yt-dlp-archive.txt"),
@@ -247,12 +270,15 @@ def job_command(engine: str, url: str, host: str, mode: str) -> list[str]:
     ]
     if mode == "audio":
         command += ["-x", "--audio-format", "mp3", "--audio-quality", "0"]
+    elif recipe.get("format") not in {"best", "original", None}:
+        command += ["-f", str(recipe["format"])]
     command.append(url)
     return command
 
 
-def run_engine(job_id: str, engine: str, url: str, host: str, mode: str) -> int:
-    command = job_command(engine, url, host, mode)
+def run_engine(job_id: str, engine: str, url: str, host: str, mode: str,
+               recipe_id: str, library_id: str) -> int:
+    command = job_command(engine, url, host, mode, recipe_id, library_id)
     append_log(job_id, f"Using {engine}: {shlex.join(command[:-1])} [URL]")
     process = subprocess.Popen(
         command,
@@ -383,7 +409,8 @@ def process_job(job_id: str) -> None:
         if cancel_events[job_id].is_set():
             break
         used_engine = engine
-        code = run_engine(job_id, engine, row["url"], row["host"], row["requested_mode"])
+        code = run_engine(job_id, engine, row["url"], row["host"], row["requested_mode"],
+                          row["recipe_id"] or "original", row["library_id"] or "stash")
         new_files = snapshot_files() - before
         if code == 0 and new_files:
             success = True
@@ -410,11 +437,22 @@ def process_job(job_id: str) -> None:
             (status, used_engine, int(time.time()), output, error, job_id),
         )
     if status == "completed":
-        manifest = write_manifest(job_id, row, snapshot_files() - before)
+        created = snapshot_files() - before
+        manifest = write_manifest(job_id, row, created)
         append_log(job_id, f"Metadata manifest written: {manifest.name}")
+        with db() as connection:
+            stats = index_paths(connection, DOWNLOAD_ROOT, [Path(item) for item in created])
+        append_log(job_id, f"Duplicate analysis: {json.dumps(stats, sort_keys=True)}")
     settings = load_settings()
     if status == "completed" and settings.get("sync_enabled") and settings.get("api_key"):
         stash_queue.put(job_id)
+    if status in {"completed", "failed"}:
+        threading.Thread(
+            target=emit_webhooks,
+            args=(advanced_settings(settings)["webhooks"], f"download.{status}",
+                  {"job_id": job_id, "url": row["url"], "engine": used_engine}),
+            daemon=True,
+        ).start()
 
 
 def worker() -> None:
@@ -467,6 +505,16 @@ def home() -> FileResponse:
     return FileResponse(WEB_ROOT / "index.html")
 
 
+@app.get("/manifest.webmanifest")
+def web_manifest() -> FileResponse:
+    return FileResponse(WEB_ROOT / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/service-worker.js")
+def service_worker() -> FileResponse:
+    return FileResponse(WEB_ROOT / "service-worker.js", media_type="application/javascript")
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -497,9 +545,10 @@ def create_job(request: DownloadRequest) -> dict:
     with db() as connection:
         connection.execute(
             """INSERT INTO jobs
-               (id,url,host,requested_mode,engine,status,created_at)
-               VALUES (?,?,?,?,?,'queued',?)""",
-            (job_id, url, host, request.mode, engine, int(time.time())),
+               (id,url,host,requested_mode,engine,status,created_at,recipe_id,library_id)
+               VALUES (?,?,?,?,?,'queued',?,?,?)""",
+            (job_id, url, host, request.mode, engine, int(time.time()),
+             request.recipe_id, request.library_id),
         )
     jobs_queue.put(job_id)
     return {"id": job_id, "engine": engine, "status": "queued"}
@@ -538,6 +587,67 @@ def get_settings() -> dict:
     return public_settings()
 
 
+@app.get("/api/advanced")
+def get_advanced() -> dict:
+    result = advanced_settings(load_settings())
+    for hook in result["webhooks"]:
+        hook["secret_configured"] = bool(hook.pop("secret", ""))
+    return result
+
+
+@app.put("/api/advanced")
+def update_advanced(request: AdvancedSettingsRequest) -> dict:
+    current = load_settings()
+    value = request.model_dump()
+    ids: set[str] = set()
+    for library in value["libraries"]:
+        identifier = re.sub(r"[^a-z0-9_-]", "-", str(library.get("id", "")).casefold()).strip("-")
+        if not identifier or identifier in ids:
+            raise HTTPException(400, "Every library needs a unique ID.")
+        ids.add(identifier)
+        library["id"] = identifier
+        safe_library_root(DOWNLOAD_ROOT, value, identifier)
+    if not value["libraries"]:
+        raise HTTPException(400, "Keep at least one library.")
+    old_hooks = {item.get("id"): item for item in advanced_settings(current)["webhooks"]}
+    for hook in value["webhooks"]:
+        if not hook.get("secret"):
+            hook["secret"] = old_hooks.get(hook.get("id"), {}).get("secret", "")
+    current["advanced"] = value
+    save_settings(current)
+    return get_advanced()
+
+
+@app.post("/api/library/import")
+def import_library() -> dict:
+    paths = [path for path in DOWNLOAD_ROOT.rglob("*") if path.is_file()]
+    with db() as connection:
+        stats = index_paths(connection, DOWNLOAD_ROOT, paths)
+    return {**stats, "files_seen": len(paths)}
+
+
+@app.get("/api/duplicates")
+def duplicates() -> dict:
+    with db() as connection:
+        groups = duplicate_groups(connection)
+    return {"groups": groups, "count": len(groups)}
+
+
+@app.get("/api/storage/candidates")
+def review_storage() -> dict:
+    policy = advanced_settings(load_settings())["storage_policy"]
+    with db() as connection:
+        candidates = storage_candidates(connection, policy)
+    return {"policy": policy, "candidates": candidates,
+            "note": "Review only. No files are deleted by this endpoint."}
+
+
+@app.get("/api/plugins")
+def plugins() -> dict:
+    return {"plugins": load_plugins(CONFIG_ROOT),
+            "format": "Declarative JSON only; plugins cannot execute code."}
+
+
 @app.put("/api/settings")
 def update_settings(request: SettingsRequest) -> dict:
     current = load_settings()
@@ -560,9 +670,9 @@ def update_settings(request: SettingsRequest) -> dict:
     }
     for key in (
         "integration_api_key_hash", "integration_api_key_last_four",
-        "integration_api_key_created_at",
+        "integration_api_key_created_at", "advanced",
     ):
-        updated[key] = current.get(key, DEFAULT_SETTINGS[key])
+        updated[key] = current.get(key, DEFAULT_SETTINGS.get(key))
     save_settings(updated)
     return public_settings()
 

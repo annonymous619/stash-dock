@@ -1,0 +1,9 @@
+{
+  "name": "Stash Dock",
+  "short_name": "Stash Dock",
+  "description": "Smart media intake and library handoff",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f2f0e8",
+  "theme_color": "#10130f"
+}

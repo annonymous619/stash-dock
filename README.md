@@ -130,3 +130,23 @@ DRM, paywalls, or access controls.
 ## License
 
 MIT
+## 0.5 media-control foundation
+
+Stash Dock now adds features that sit above the individual download engines:
+
+- **Download recipes** pair a friendly quality preset with a job.
+- **Multiple libraries** route jobs into safe subfolders beneath `/downloads`.
+- **Smart duplicate review** detects byte-identical files and probable same-title,
+  same-size copies. It reports evidence and never removes a file automatically.
+- **Signed webhooks** send `download.completed` and `download.failed` events using
+  `X-Stash-Dock-Signature: sha256=…`.
+- **Existing-library import** indexes media already present under `/downloads`.
+- **Storage policy previews** list old, large candidates without deleting them.
+  Stash play counts must be verified before a future approval-based delete action.
+- **Safe plugins** are declarative JSON manifests in `/config/plugins`; they cannot
+  execute Python or shell commands.
+- **Mobile PWA** provides a touch-friendly bottom navigation bar, offline shell,
+  and Add to Home Screen support.
+
+Advanced settings are available through `GET/PUT /api/advanced`. The Manage screen
+provides library indexing, duplicate review, storage previews, and plugin status.
