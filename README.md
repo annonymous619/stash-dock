@@ -23,6 +23,8 @@ time enjoying a tidy library.
 - Editable host routing and site labels
 - Direct Stash GraphQL integration
 - Automatic creator profiles and media associations in Stash
+- Structured metadata manifests for reliable creator, title, source, and tag
+  handoff to Stash
 - Smart performer avatars: use a downloaded photo when available, otherwise
   borrow a Stash preview or capture a tasteful frame from a video
 - Write-only Stash API key field
@@ -73,6 +75,23 @@ Default container mappings:
 Stash Dock calls Stash directly after a successful download. This is similar
 to the API chain used by request managers and download clients: download,
 organize, scan, then enrich.
+
+## A clearer conversation with Stash
+
+Every successful download produces a normalized manifest in
+`/config/manifests`. It records the creator, title, original source, tags, and
+the exact files created. Stash Dock uses this structured handoff first, then
+falls back to folder names when a source provides limited metadata.
+
+This allows Stash Dock to:
+
+- Match newly scanned scenes and galleries to the correct creator
+- Preserve the source URL and a useful title
+- Add source and downloader tags without removing existing tags
+- Group mixed image and video downloads more consistently
+
+Manifests remain in appdata and are reused safely during later scans. They are
+not included in diagnostics exports.
 
 ## Organization
 

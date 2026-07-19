@@ -25,7 +25,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Validate Python
-        run: python -m py_compile backend/app.py backend/stash_integration.py
+        run: |
+          python -m py_compile backend/app.py backend/stash_integration.py
+          PYTHONPATH=backend python -m unittest backend/test_metadata_handoff.py
       - name: Build image
         uses: docker/build-push-action@v6
         with:

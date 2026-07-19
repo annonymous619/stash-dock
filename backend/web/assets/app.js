@@ -139,6 +139,7 @@ async function loadDiagnostics() {
     ["Stash API", result.stash_configured ? "Configured" : "Missing key", result.stash_configured],
     ["Automatic sync", result.sync_enabled ? "Enabled" : "Disabled", result.sync_enabled],
     ["Integration API", result.integration_api_configured ? "Key active" : "No key", result.integration_api_configured],
+    ["Metadata handoff", `${result.metadata_manifests} manifests`, true],
     ["Downloads volume", result.downloads_writable ? "Writable" : "Read only", result.downloads_writable],
     ["Config volume", result.config_writable ? "Writable" : "Read only", result.config_writable],
     ["gallery-dl", result.gallery_dl, !result.gallery_dl.startsWith("unavailable")],

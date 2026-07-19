@@ -35,6 +35,12 @@ DB_PATH = CONFIG_ROOT / "jobs.sqlite3"
 SETTINGS_PATH = CONFIG_ROOT / "settings.json"
 MAX_LOG_LINES = 300
 STASH_KEY_FILE = CONFIG_ROOT / "stash-api-key"
+MANIFEST_ROOT = CONFIG_ROOT / "manifests"
+MEDIA_EXTENSIONS = {
+    ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v",
+    ".jpg", ".jpeg", ".png", ".webp", ".gif",
+    ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav",
+}
 
 GALLERY_HOST_HINTS = {
     "erome.com", "imgur.com", "flickr.com", "deviantart.com", "reddit.com",
@@ -45,7 +51,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.3.0")
+app = FastAPI(title="Stash Dock", version="0.4.0")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -270,6 +276,92 @@ def snapshot_files() -> set[str]:
     return {str(path) for path in DOWNLOAD_ROOT.rglob("*") if path.is_file()}
 
 
+def metadata_value(metadata: dict, *keys: str) -> str:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def infer_path_metadata(path: Path, settings: dict) -> tuple[str, str, str]:
+    try:
+        parts = path.relative_to(DOWNLOAD_ROOT).parts
+    except ValueError:
+        return "", "", ""
+    if len(parts) < 2:
+        return (parts[0] if parts else "", "", path.stem)
+    layout = settings.get("folder_layout", "site_creator_title")
+    if layout == "creator_site_title" and len(parts) >= 3:
+        return parts[1], parts[0], parts[2]
+    if layout == "creator_title":
+        return "", parts[0], parts[1]
+    return parts[0], parts[1], parts[2] if len(parts) >= 3 else path.stem
+
+
+def write_manifest(job_id: str, row: sqlite3.Row, created_files: set[str]) -> Path:
+    settings = load_settings()
+    paths = sorted(Path(item) for item in created_files)
+    sidecars = [path for path in paths if path.name.endswith(".info.json")]
+    metadata: dict = {}
+    for sidecar in sidecars:
+        try:
+            candidate = json.loads(sidecar.read_text(encoding="utf-8"))
+            if isinstance(candidate, dict):
+                metadata = candidate
+                break
+        except (OSError, json.JSONDecodeError):
+            continue
+    media = [path for path in paths if path.suffix.casefold() in MEDIA_EXTENSIONS]
+    path_site, path_creator, path_title = infer_path_metadata(
+        media[0] if media else DOWNLOAD_ROOT, settings
+    )
+    site = metadata_value(metadata, "extractor_key", "extractor") or path_site
+    creator = metadata_value(
+        metadata, "uploader", "channel", "creator", "artist",
+        "uploader_id", "channel_id",
+    ) or path_creator or settings.get("unknown_creator_label", "Unknown Creator")
+    title = metadata_value(metadata, "title", "fulltitle", "album") or path_title
+    source_url = metadata_value(
+        metadata, "webpage_url", "original_url"
+    ) or row["url"]
+    raw_tags = [
+        value for key in ("tags", "categories", "genres")
+        for value in (metadata.get(key) or []) if isinstance(value, str)
+    ]
+    media_entries = []
+    for path in media:
+        try:
+            relative = path.relative_to(DOWNLOAD_ROOT).as_posix()
+        except ValueError:
+            continue
+        suffix = path.suffix.casefold()
+        media_type = (
+            "video" if suffix in {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v"}
+            else "image" if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+            else "audio"
+        )
+        media_entries.append({"path": relative, "type": media_type})
+    manifest = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "created_at": int(time.time()),
+        "source": {"url": source_url, "host": row["host"], "site": site},
+        "creator": creator,
+        "title": title,
+        "tags": sorted(set(
+            ["Stash Dock", f"Source: {site or site_name(row['host'])}"] + raw_tags
+        ), key=str.casefold),
+        "media": media_entries,
+    }
+    MANIFEST_ROOT.mkdir(parents=True, exist_ok=True)
+    destination = MANIFEST_ROOT / f"{job_id}.json"
+    temporary = destination.with_suffix(".tmp")
+    temporary.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    temporary.replace(destination)
+    return destination
+
+
 def process_job(job_id: str) -> None:
     with db() as connection:
         row = connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -317,6 +409,9 @@ def process_job(job_id: str) -> None:
                WHERE id=?""",
             (status, used_engine, int(time.time()), output, error, job_id),
         )
+    if status == "completed":
+        manifest = write_manifest(job_id, row, snapshot_files() - before)
+        append_log(job_id, f"Metadata manifest written: {manifest.name}")
     settings = load_settings()
     if status == "completed" and settings.get("sync_enabled") and settings.get("api_key"):
         stash_queue.put(job_id)
@@ -351,6 +446,7 @@ def stash_worker() -> None:
                 settings["stash_url"], api_key, DOWNLOAD_ROOT,
                 int(settings.get("scan_wait_seconds", 25)),
                 CONFIG_ROOT / "avatars",
+                MANIFEST_ROOT,
             )
             append_log(job_id, f"Stash synchronization complete: {json.dumps(stats, sort_keys=True)}")
         except Exception as exc:
@@ -594,6 +690,8 @@ def diagnostics() -> dict:
         "integration_api_configured": bool(
             settings.get("integration_api_key_hash")
         ),
+        "metadata_manifests": len(list(MANIFEST_ROOT.glob("*.json")))
+        if MANIFEST_ROOT.is_dir() else 0,
         "sync_enabled": settings.get("sync_enabled", False),
         "queue": jobs_queue.qsize(),
         "stash_queue": stash_queue.qsize(),

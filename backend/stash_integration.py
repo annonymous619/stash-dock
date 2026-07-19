@@ -57,15 +57,19 @@ class StashClient:
               findPerformers(filter: {per_page: -1}) {
                 performers { id name image_path }
               }
+              findTags(filter: {per_page: -1}) {
+                tags { id name }
+              }
               findScenes(filter: {per_page: -1}) {
                 scenes {
-                  id files { path } paths { screenshot }
-                  performers { id } galleries { id }
+                  id title urls files { path } paths { screenshot }
+                  performers { id } galleries { id } tags { id }
                 }
               }
               findGalleries(filter: {per_page: -1}) {
                 galleries {
-                  id folder { path } performers { id } scenes { id }
+                  id title urls folder { path } performers { id }
+                  scenes { id } tags { id }
                 }
               }
             }"""
@@ -87,6 +91,77 @@ class StashClient:
             }""",
             {"input": {"id": performer_id, "image": image}},
         )
+
+    def create_tag(self, name: str) -> str:
+        data = self.graphql(
+            """mutation Create($input: TagCreateInput!) {
+              tagCreate(input: $input) { id }
+            }""",
+            {"input": {"name": name}},
+        )
+        return data["tagCreate"]["id"]
+
+    def update_scene_manifest(
+        self, scene: dict, performer_id: str | None, tag_ids: list[str],
+        title: str, source_url: str,
+    ) -> bool:
+        performers = {p["id"] for p in scene["performers"]}
+        if performer_id:
+            performers.add(performer_id)
+        tags = {tag["id"] for tag in scene.get("tags") or []} | set(tag_ids)
+        urls = set(scene.get("urls") or [])
+        if source_url:
+            urls.add(source_url)
+        final_title = scene.get("title") or title
+        if (
+            performers == {p["id"] for p in scene["performers"]}
+            and tags == {tag["id"] for tag in scene.get("tags") or []}
+            and urls == set(scene.get("urls") or [])
+            and final_title == (scene.get("title") or "")
+        ):
+            return False
+        self.graphql(
+            """mutation Update($input: SceneUpdateInput!) {
+              sceneUpdate(input: $input) { id }
+            }""",
+            {"input": {
+                "id": scene["id"], "title": final_title,
+                "urls": sorted(urls), "performer_ids": sorted(performers),
+                "tag_ids": sorted(tags),
+            }},
+        )
+        return True
+
+    def update_gallery_manifest(
+        self, gallery: dict, performer_id: str | None, tag_ids: list[str],
+        title: str, source_url: str,
+    ) -> bool:
+        performers = {p["id"] for p in gallery["performers"]}
+        if performer_id:
+            performers.add(performer_id)
+        tags = {tag["id"] for tag in gallery.get("tags") or []} | set(tag_ids)
+        urls = set(gallery.get("urls") or [])
+        if source_url:
+            urls.add(source_url)
+        final_title = gallery.get("title") or title
+        if (
+            performers == {p["id"] for p in gallery["performers"]}
+            and tags == {tag["id"] for tag in gallery.get("tags") or []}
+            and urls == set(gallery.get("urls") or [])
+            and final_title == (gallery.get("title") or "")
+        ):
+            return False
+        self.graphql(
+            """mutation Update($input: GalleryUpdateInput!) {
+              galleryUpdate(input: $input) { id }
+            }""",
+            {"input": {
+                "id": gallery["id"], "title": final_title,
+                "urls": sorted(urls), "performer_ids": sorted(performers),
+                "tag_ids": sorted(tags),
+            }},
+        )
+        return True
 
     def update_scene(self, scene: dict, performer_id: str, gallery_id: str | None) -> bool:
         performer_ids = sorted({p["id"] for p in scene["performers"]} | {performer_id})
@@ -228,10 +303,114 @@ def video_frame_avatar(
     return f"data:image/jpeg;base64,{base64.b64encode(cached.read_bytes()).decode()}"
 
 
+def load_manifests(manifest_root: Path | None) -> list[dict]:
+    if not manifest_root or not manifest_root.is_dir():
+        return []
+    manifests = []
+    for path in sorted(manifest_root.glob("*.json")):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value, dict) and value.get("schema_version") == 1:
+                manifests.append(value)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return manifests
+
+
+def clean_tag_names(values: list[str]) -> list[str]:
+    cleaned = []
+    for value in values:
+        name = re.sub(r"\s+", " ", str(value)).strip()[:80]
+        if name and name.casefold() not in {item.casefold() for item in cleaned}:
+            cleaned.append(name)
+        if len(cleaned) >= 20:
+            break
+    return cleaned
+
+
+def apply_manifests(
+    client: StashClient, inventory: dict, manifests: list[dict]
+) -> dict[str, int]:
+    performers = inventory["findPerformers"]["performers"]
+    scenes = inventory["findScenes"]["scenes"]
+    galleries = inventory["findGalleries"]["galleries"]
+    tags = inventory["findTags"]["tags"]
+    by_performer = {item["name"].casefold(): item for item in performers}
+    by_tag = {item["name"].casefold(): item["id"] for item in tags}
+    by_scene_path = {
+        PurePosixPath(file["path"]): scene
+        for scene in scenes for file in scene.get("files") or []
+    }
+    stats = {
+        "manifest_performers_created": 0, "manifest_tags_created": 0,
+        "manifest_scenes_updated": 0, "manifest_galleries_updated": 0,
+    }
+    for manifest in manifests:
+        creator = str(manifest.get("creator") or "").strip()
+        performer_id = None
+        if creator and creator.casefold() not in {
+            "unknown", "unknown creator", "na"
+        }:
+            performer = by_performer.get(creator.casefold())
+            if not performer:
+                performer = {
+                    "id": client.create_performer(creator), "name": creator,
+                    "image_path": "default=true",
+                }
+                by_performer[creator.casefold()] = performer
+                stats["manifest_performers_created"] += 1
+            performer_id = performer["id"]
+        tag_ids = []
+        for name in clean_tag_names(manifest.get("tags") or []):
+            tag_id = by_tag.get(name.casefold())
+            if not tag_id:
+                tag_id = client.create_tag(name)
+                by_tag[name.casefold()] = tag_id
+                stats["manifest_tags_created"] += 1
+            tag_ids.append(tag_id)
+        title = str(manifest.get("title") or "").strip()[:255]
+        source_url = str((manifest.get("source") or {}).get("url") or "").strip()
+        local_paths = [
+            STASH_LIBRARY / PurePosixPath(item["path"])
+            for item in manifest.get("media") or [] if item.get("path")
+        ]
+        matched_scenes = {
+            scene["id"]: scene for path in local_paths
+            if (scene := by_scene_path.get(path))
+        }
+        for scene in matched_scenes.values():
+            stats["manifest_scenes_updated"] += int(
+                client.update_scene_manifest(
+                    scene, performer_id, tag_ids, title, source_url
+                )
+            )
+        matched_galleries: dict[str, dict] = {}
+        for gallery in galleries:
+            folder = gallery.get("folder")
+            if not folder:
+                continue
+            folder_path = PurePosixPath(folder["path"])
+            if any(path == folder_path or folder_path in path.parents for path in local_paths):
+                matched_galleries[gallery["id"]] = gallery
+        for gallery in matched_galleries.values():
+            stats["manifest_galleries_updated"] += int(
+                client.update_gallery_manifest(
+                    gallery, performer_id, tag_ids, title, source_url
+                )
+            )
+    return stats
+
+
 def organize(
-    client: StashClient, download_root: Path, api_key: str, avatar_cache: Path
+    client: StashClient, download_root: Path, api_key: str, avatar_cache: Path,
+    manifests: list[dict] | None = None,
 ) -> dict[str, int]:
     inventory = client.inventory()
+    stats = {"performers_created": 0, "scenes_updated": 0,
+             "galleries_updated": 0, "avatars_updated": 0}
+    if manifests:
+        stats.update(apply_manifests(client, inventory, manifests))
+        inventory = client.inventory()
     performers = inventory["findPerformers"]["performers"]
     scenes = inventory["findScenes"]["scenes"]
     galleries = inventory["findGalleries"]["galleries"]
@@ -247,8 +426,6 @@ def organize(
         if folder and (parsed := parse_erome(folder["path"])):
             album_galleries[parsed] = gallery
 
-    stats = {"performers_created": 0, "scenes_updated": 0,
-             "galleries_updated": 0, "avatars_updated": 0}
     for creator, album in sorted(set(album_scenes) | set(album_galleries)):
         performer = by_name.get(creator.casefold())
         if not performer:
@@ -303,7 +480,7 @@ def organize(
 
 def synchronize(
     stash_url: str, api_key: str, download_root: Path, scan_wait: int = 25,
-    avatar_cache: Path | None = None,
+    avatar_cache: Path | None = None, manifest_root: Path | None = None,
 ) -> dict[str, int]:
     client = StashClient(stash_url, api_key)
     client.scan()
@@ -314,6 +491,7 @@ def synchronize(
             return organize(
                 client, download_root, api_key,
                 avatar_cache or (download_root / ".stash-dock-avatars"),
+                load_manifests(manifest_root),
             )
         except Exception as exc:
             last_error = exc

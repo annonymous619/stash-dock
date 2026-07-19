@@ -29,9 +29,14 @@ URL or folder name contains information you do not want to share.
 
 - Confirm the source URL represents a creator or post page.
 - Check the resulting folder structure in the job log.
+- Confirm the job log says `Metadata manifest written`.
 - Configure a clear unknown-creator label.
 - Some extractors provide limited metadata. Include the redacted diagnostics
   report and a non-sensitive example URL when opening an issue.
+
+Normalized download metadata is stored under `/config/manifests`. Do not edit a
+manifest while a synchronization is running. Removing a manifest does not
+delete media, but later scans will fall back to folder-based matching.
 
 ## Performer has no avatar
 
