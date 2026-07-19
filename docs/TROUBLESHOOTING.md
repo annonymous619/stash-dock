@@ -33,6 +33,13 @@ URL or folder name contains information you do not want to share.
 - Some extractors provide limited metadata. Include the redacted diagnostics
   report and a non-sensitive example URL when opening an issue.
 
+## Performer has no avatar
+
+Stash Dock prefers a downloaded image. For video-only creators it first uses a
+Stash-generated scene screenshot, then falls back to extracting a frame roughly
+one-third into a local video with FFmpeg. Generated frames are cached under
+`/config/avatars`. Run **Manual Stash sync** after the scene scan completes.
+
 ## A site stopped working
 
 The container updates `gallery-dl` and `yt-dlp` when a new image is built. Site

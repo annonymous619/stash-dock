@@ -326,6 +326,7 @@ def stash_worker() -> None:
             stats = synchronize(
                 settings["stash_url"], api_key, DOWNLOAD_ROOT,
                 int(settings.get("scan_wait_seconds", 25)),
+                CONFIG_ROOT / "avatars",
             )
             append_log(job_id, f"Stash synchronization complete: {json.dumps(stats, sort_keys=True)}")
         except Exception as exc:

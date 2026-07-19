@@ -12,6 +12,8 @@ performers.
 - Configurable `site / creator / title` folder layouts
 - Editable host routing and site labels
 - Direct Stash GraphQL integration
+- Automatic performer avatars from downloaded images, Stash screenshots, or
+  cached FFmpeg video frames
 - Write-only Stash API key field
 - Connection test, manual sync, and redacted diagnostics export
 - Persistent history and duplicate-download archives

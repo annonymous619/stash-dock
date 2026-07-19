@@ -4,6 +4,8 @@ import base64
 import json
 import mimetypes
 import random
+import re
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -179,7 +181,56 @@ def screenshot_avatar(scene: dict, api_key: str) -> str | None:
         return None
 
 
-def organize(client: StashClient, download_root: Path, api_key: str) -> dict[str, int]:
+def video_frame_avatar(
+    scenes: list[dict], download_root: Path, cache_root: Path, creator: str
+) -> str | None:
+    safe_creator = re.sub(r"[^A-Za-z0-9._-]+", "_", creator).strip("._") or "creator"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cached = cache_root / f"{safe_creator}.jpg"
+    if not cached.is_file():
+        candidates: list[Path] = []
+        for scene in scenes:
+            for item in scene.get("files") or []:
+                try:
+                    relative = PurePosixPath(item["path"]).relative_to(STASH_LIBRARY)
+                except (KeyError, ValueError):
+                    continue
+                local_path = download_root.joinpath(*relative.parts)
+                if local_path.is_file():
+                    candidates.append(local_path)
+        random.SystemRandom().shuffle(candidates)
+        for video in candidates:
+            try:
+                probe = subprocess.run(
+                    [
+                        "ffprobe", "-v", "error", "-show_entries",
+                        "format=duration", "-of", "default=nw=1:nk=1", str(video),
+                    ],
+                    capture_output=True, text=True, timeout=30, check=True,
+                )
+                duration = float(probe.stdout.strip())
+                timestamp = max(1.0, min(duration * 0.35, duration - 0.5))
+                subprocess.run(
+                    [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-ss", f"{timestamp:.2f}", "-i", str(video), "-frames:v", "1",
+                        "-vf", "scale=640:-2", "-q:v", "3", str(cached),
+                    ],
+                    capture_output=True, timeout=90, check=True,
+                )
+                if cached.is_file() and cached.stat().st_size > 1000:
+                    break
+                cached.unlink(missing_ok=True)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                cached.unlink(missing_ok=True)
+    if not cached.is_file():
+        return None
+    return f"data:image/jpeg;base64,{base64.b64encode(cached.read_bytes()).decode()}"
+
+
+def organize(
+    client: StashClient, download_root: Path, api_key: str, avatar_cache: Path
+) -> dict[str, int]:
     inventory = client.inventory()
     performers = inventory["findPerformers"]["performers"]
     scenes = inventory["findScenes"]["scenes"]
@@ -235,10 +286,12 @@ def organize(client: StashClient, download_root: Path, api_key: str) -> dict[str
         if "default=true" in (performer.get("image_path") or ""):
             images = [image for image in
                       (screenshot_avatar(scene, api_key) for scene in matching) if image]
-            if images:
-                client.set_performer_image(
-                    performer["id"], random.SystemRandom().choice(images)
-                )
+            image = (
+                random.SystemRandom().choice(images) if images
+                else video_frame_avatar(matching, download_root, avatar_cache, creator)
+            )
+            if image:
+                client.set_performer_image(performer["id"], image)
                 performer["image_path"] = "assigned"
                 stats["avatars_updated"] += 1
         for scene in matching:
@@ -249,7 +302,8 @@ def organize(client: StashClient, download_root: Path, api_key: str) -> dict[str
 
 
 def synchronize(
-    stash_url: str, api_key: str, download_root: Path, scan_wait: int = 25
+    stash_url: str, api_key: str, download_root: Path, scan_wait: int = 25,
+    avatar_cache: Path | None = None,
 ) -> dict[str, int]:
     client = StashClient(stash_url, api_key)
     client.scan()
@@ -257,7 +311,10 @@ def synchronize(
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            return organize(client, download_root, api_key)
+            return organize(
+                client, download_root, api_key,
+                avatar_cache or (download_root / ".stash-dock-avatars"),
+            )
         except Exception as exc:
             last_error = exc
             if attempt < 2:
