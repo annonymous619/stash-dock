@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Stash Dock</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand"><div class="mark">SD</div><div><p class="eyebrow">UNIFIED MEDIA INTAKE</p><h1>Stash Dock</h1></div></div>
+      <nav aria-label="Primary">
+        <button class="nav-item active" data-view="downloads">Downloads</button>
+        <button class="nav-item" data-view="settings">Settings</button>
+        <button class="nav-item" data-view="diagnostics">Diagnostics</button>
+      </nav>
+      <span id="health" class="health">Connecting</span>
+    </header>
+
+    <section id="downloads-view" class="view active">
+      <div class="hero">
+        <div>
+          <p class="eyebrow lime">SMART ROUTING</p>
+          <h2>One link.<br>Right downloader.</h2>
+          <p class="lede">Routes galleries to gallery-dl, videos to yt-dlp, files by creator, then tells Stash exactly what changed.</p>
+        </div>
+        <form id="download-form" class="panel">
+          <label for="url">Media or creator URL</label>
+          <input id="url" name="url" type="url" placeholder="https://example.com/creator/post" required>
+          <div class="mode-row">
+            <label><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
+            <label><input type="radio" name="mode" value="gallery"><span>Gallery</span></label>
+            <label><input type="radio" name="mode" value="video"><span>Video</span></label>
+            <label><input type="radio" name="mode" value="audio"><span>Audio</span></label>
+          </div>
+          <label class="legal"><input id="authorized" type="checkbox" required> I own this media or have permission to save it.</label>
+          <button type="submit" class="primary">Start download <b>→</b></button>
+          <p id="message" class="message" role="status"></p>
+        </form>
+      </div>
+      <section class="jobs">
+        <div class="section-heading"><div><p class="eyebrow">DOWNLOAD QUEUE</p><h3>Recent jobs</h3></div><button id="refresh" class="quiet">Refresh</button></div>
+        <div id="job-list" class="job-list"><p class="empty">No downloads yet.</p></div>
+      </section>
+    </section>
+
+    <section id="settings-view" class="view">
+      <div class="page-intro">
+        <p class="eyebrow lime">CONFIGURATION</p>
+        <h2>Connect and organize.</h2>
+        <p>Generate an API key in Stash under Settings → Security, then paste it here. The key stays in your local appdata.</p>
+      </div>
+      <form id="settings-form" class="settings-grid">
+        <section class="panel settings-card">
+          <p class="card-number">01</p><h3>Stash connection</h3>
+          <label for="stash-url">Stash URL</label>
+          <input id="stash-url" type="url" placeholder="http://stash:9999" required>
+          <label for="api-key">API key</label>
+          <input id="api-key" type="password" placeholder="Leave blank to keep the saved key">
+          <p id="key-state" class="hint">No key saved</p>
+          <label class="toggle"><input id="sync-enabled" type="checkbox"><span>Synchronize after every download</span></label>
+          <label for="scan-wait">Scan wait (seconds)</label>
+          <input id="scan-wait" type="number" min="5" max="300">
+        </section>
+        <section class="panel settings-card">
+          <p class="card-number">02</p><h3>Folder structure</h3>
+          <label for="folder-layout">Video folder layout</label>
+          <select id="folder-layout">
+            <option value="site_creator_title">Site / Creator / Title</option>
+            <option value="creator_site_title">Creator / Site / Title</option>
+            <option value="creator_title">Creator / Title</option>
+          </select>
+          <label for="unknown-creator">Unknown creator label</label>
+          <input id="unknown-creator" type="text">
+          <label for="site-labels">Site labels <span class="hint">one per line: hostname=Folder Name</span></label>
+          <textarea id="site-labels" rows="6" placeholder="pornhub=Pornhub&#10;xvideos=XVideos"></textarea>
+        </section>
+        <section class="panel settings-card">
+          <p class="card-number">03</p><h3>Routing rules</h3>
+          <label for="gallery-hosts">Gallery-first sites <span class="hint">one hostname per line</span></label>
+          <textarea id="gallery-hosts" rows="7"></textarea>
+          <label for="video-hosts">Video-first sites <span class="hint">one hostname per line</span></label>
+          <textarea id="video-hosts" rows="7"></textarea>
+        </section>
+        <div class="settings-actions">
+          <button type="submit" class="primary">Save settings</button>
+          <button type="button" id="test-stash" class="quiet">Test Stash connection</button>
+          <button type="button" id="sync-now" class="quiet">Synchronize now</button>
+          <p id="settings-message" class="message" role="status"></p>
+        </div>
+      </form>
+    </section>
+
+    <section id="diagnostics-view" class="view">
+      <div class="page-intro">
+        <p class="eyebrow lime">SUPPORT</p><h2>Know what broke.</h2>
+        <p>Safe diagnostics exclude API keys and download logs. Export the report when asking for help.</p>
+      </div>
+      <div class="section-heading"><h3>System checks</h3><div><button id="reload-diagnostics" class="quiet">Run checks</button> <a class="button-link" href="/api/diagnostics/export">Export report</a></div></div>
+      <div id="diagnostic-list" class="diagnostic-grid"><p class="empty">Run checks to load diagnostics.</p></div>
+      <section class="troubleshooting">
+        <h3>Quick fixes</h3>
+        <details><summary>Stash says unauthorized</summary><p>Generate a new key in Stash Settings → Security, paste it into Settings here, save, then run Test Stash connection.</p></details>
+        <details><summary>A creator is missing</summary><p>Confirm the files are under Site / Creator / Album, run Synchronize now, then inspect the sync job log.</p></details>
+        <details><summary>A site stopped downloading</summary><p>Check the job log first. Update the container to refresh gallery-dl and yt-dlp extractors. Some sites require cookies or may block automated access.</p></details>
+        <details><summary>Files are in the wrong folder</summary><p>Check Folder structure and Site labels. Existing files are never moved automatically when a rule changes.</p></details>
+      </section>
+    </section>
+  </main>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

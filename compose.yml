@@ -1,0 +1,15 @@
+services:
+  stash-dock:
+    image: ghcr.io/annonymous619/stash-dock:latest
+    # For local development, replace image with: build: .
+    container_name: Stash-Dock
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    volumes:
+      - /mnt/user/Data/media/porn:/downloads
+      - /mnt/user/appdata/stash-dock:/config
+    environment:
+      - TZ=America/Los_Angeles
+      - PUID=99
+      - PGID=100

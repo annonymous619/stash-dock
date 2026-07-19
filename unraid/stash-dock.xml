@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Stash-Dock</Name>
+  <Repository>ghcr.io/annonymous619/stash-dock:latest</Repository>
+  <Registry>https://github.com/annonymous619/stash-dock/pkgs/container/stash-dock</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/annonymous619/stash-dock/issues</Support>
+  <Project>https://github.com/annonymous619/stash-dock</Project>
+  <Overview>Download authorized gallery and video media, organize it by site and creator, and synchronize it directly with Stash.</Overview>
+  <Category>MediaApp:Other</Category>
+  <WebUI>http://[IP]:[PORT:9091]</WebUI>
+  <Icon>https://raw.githubusercontent.com/annonymous619/stash-dock/main/unraid/stash-dock.png</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Stash is optional but required for automatic library synchronization. Use only for media you are authorized to save.</Requires>
+  <Config Name="Web UI" Target="9091" Default="9091" Mode="tcp" Description="Stash Dock web interface" Type="Port" Display="always" Required="true" Mask="false">9091</Config>
+  <Config Name="Media Library" Target="/downloads" Default="/mnt/user/Data/media/porn" Mode="rw" Description="Host media folder also scanned by Stash" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Data/media/porn</Config>
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/stash-dock" Mode="rw" Description="Settings, queue database, archives, and logs" Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/stash-dock</Config>
+  <Config Name="Timezone" Target="TZ" Default="America/Los_Angeles" Mode="" Description="Container timezone" Type="Variable" Display="advanced" Required="false" Mask="false">America/Los_Angeles</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Unraid nobody user ID" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Unraid users group ID" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+</Container>

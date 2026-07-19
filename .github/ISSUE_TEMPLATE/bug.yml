@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible Stash Dock problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Never include API keys, passwords, cookies, or private URLs.
+  - type: input
+    id: version
+    attributes:
+      label: Stash Dock version
+      placeholder: v0.2.0 or image digest
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: Unraid version or Docker host OS
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Download mode
+      options: [Auto, Gallery, Video, Audio, Stash sync only]
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and job error
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Drag the JSON export here after reviewing it.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, cookies, and private URLs.
+          required: true
