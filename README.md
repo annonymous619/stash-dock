@@ -150,3 +150,65 @@ Stash Dock now adds features that sit above the individual download engines:
 
 Advanced settings are available through `GET/PUT /api/advanced`. The Manage screen
 provides library indexing, duplicate review, storage previews, and plugin status.
+
+## 0.6 community configuration
+
+Version 0.6 makes Stash Dock customizable without forking its download core:
+
+- **Declarative rules** match a hostname, URL fragment, or requested mode and may
+  select a recipe, library, cookie profile, forced mode, and tags.
+- **Cookie profiles** reference Netscape-format cookie files beneath
+  `/config/cookies`. Passwords are never stored by Stash Dock, cookie contents
+  never appear in the WebUI, and configuration exports include filenames only.
+- **Schedules** keep a job in `scheduled` state until the selected Unix timestamp.
+- **Feature toggles** let an installation enable or hide downloads, audio,
+  schedules, duplicate/storage review, plugins, webhooks, and Stash sync.
+- **Community bundles** export and import routing configuration as JSON. Stash API
+  keys, integration keys, webhook secrets, passwords, and cookie contents are
+  deliberately excluded.
+
+Example rules:
+
+```json
+[
+  {
+    "name": "YouTube playlists",
+    "host": "youtube.com",
+    "url_contains": "/playlist",
+    "recipe_id": "balanced-1080",
+    "library_id": "stash",
+    "cookie_profile": "youtube",
+    "tags": ["Playlist"],
+    "enabled": true
+  },
+  {
+    "name": "Audio requests",
+    "mode": "audio",
+    "recipe_id": "audio-best",
+    "library_id": "music",
+    "enabled": true
+  }
+]
+```
+
+Cookie profiles are useful only for material the signed-in account is authorized
+to access—for example an age-restricted YouTube video, a private video shared with
+the account, an Instagram account the user follows, or a login-only Reddit post.
+They are not an access-control bypass. Export cookies in Netscape format using a
+trusted browser-side method, place the file in `/config/cookies`, restrict its
+filesystem permissions, and reference only its filename:
+
+```json
+[
+  {
+    "id": "youtube",
+    "name": "YouTube account",
+    "filename": "youtube.txt",
+    "enabled": true
+  }
+]
+```
+
+The authorization switch remains a hard API requirement. The WebUI will not submit
+an off switch, and direct clients receive HTTP 400 unless they send
+`"authorized": true`.

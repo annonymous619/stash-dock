@@ -34,6 +34,13 @@ DEFAULT_ADVANCED = {
         "maximum_play_count": 0, "minimum_size_mb": 100,
     },
     "plugins_enabled": True,
+    "rules": [],
+    "cookie_profiles": [],
+    "feature_toggles": {
+        "downloads": True, "audio_mode": True, "schedules": True,
+        "duplicate_review": True, "storage_review": True,
+        "plugins": True, "webhooks": True, "stash_sync": True,
+    },
 }
 
 
@@ -64,9 +71,55 @@ def safe_library_root(download_root: Path, advanced: dict, library_id: str) -> P
     return candidate
 
 
+def match_rule(advanced: dict, host: str, url: str, mode: str) -> dict:
+    """Merge enabled declarative rules in order; later matches win."""
+    result: dict = {}
+    for rule in advanced.get("rules", []):
+        if not rule.get("enabled", True):
+            continue
+        host_pattern = str(rule.get("host", "")).casefold().strip()
+        url_contains = str(rule.get("url_contains", "")).casefold().strip()
+        rule_mode = str(rule.get("mode", "")).casefold().strip()
+        if host_pattern and not (
+            host == host_pattern or host.endswith("." + host_pattern)
+        ):
+            continue
+        if url_contains and url_contains not in url.casefold():
+            continue
+        if rule_mode and rule_mode != mode:
+            continue
+        for key in ("recipe_id", "library_id", "cookie_profile", "force_mode"):
+            if rule.get(key):
+                result[key] = rule[key]
+        if isinstance(rule.get("tags"), list):
+            result["tags"] = list(dict.fromkeys(result.get("tags", []) + rule["tags"]))
+    return result
+
+
+def cookie_file(config_root: Path, advanced: dict, profile_id: str) -> Path | None:
+    profile = next(
+        (item for item in advanced.get("cookie_profiles", [])
+         if item.get("id") == profile_id and item.get("enabled", True)),
+        None,
+    )
+    if not profile:
+        return None
+    filename = Path(str(profile.get("filename", ""))).name
+    if not filename:
+        return None
+    candidate = (config_root / "cookies" / filename).resolve()
+    cookie_root = (config_root / "cookies").resolve()
+    if cookie_root not in candidate.parents:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 def init_advanced_storage(connection: sqlite3.Connection) -> None:
     columns = {row[1] for row in connection.execute("PRAGMA table_info(jobs)")}
-    for name, definition in (("recipe_id", "TEXT"), ("library_id", "TEXT")):
+    for name, definition in (
+        ("recipe_id", "TEXT"), ("library_id", "TEXT"),
+        ("cookie_profile", "TEXT"), ("scheduled_at", "INTEGER"),
+    ):
         if name not in columns:
             connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
     connection.execute(

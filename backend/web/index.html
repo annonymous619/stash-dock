@@ -32,13 +32,15 @@
           <label for="url">Media or creator URL</label>
           <input id="url" name="url" type="url" placeholder="https://example.com/creator/post" required>
           <div class="selectors"><label>Recipe<select id="recipe"></select></label><label>Library<select id="library"></select></label></div>
+          <label for="schedule-at">Schedule for later <span class="hint">optional, your browser time</span></label>
+          <input id="schedule-at" type="datetime-local">
           <div class="mode-row">
             <label><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
             <label><input type="radio" name="mode" value="gallery"><span>Gallery</span></label>
             <label><input type="radio" name="mode" value="video"><span>Video</span></label>
             <label><input type="radio" name="mode" value="audio"><span>Audio</span></label>
           </div>
-          <label class="legal"><input id="authorized" type="checkbox" required> I own this media or have permission to save it.</label>
+          <label class="legal switch-control"><input id="authorized" type="checkbox" required><span class="switch-track"></span><span>I own this media or have permission to save it.</span></label>
           <button type="submit" class="primary">Start download <b>→</b></button>
           <p id="message" class="message" role="status"></p>
         </form>
@@ -112,6 +114,29 @@
             <div class="copy-row"><input id="generated-key" type="text" readonly><button type="button" id="copy-integration-key" class="quiet">Copy</button></div>
           </div>
           <p class="hint">Send it as <code>X-API-Key</code> or <code>Authorization: Bearer …</code>. Keep this WebUI behind your trusted network or authenticated tunnel.</p>
+        </section>
+        <section class="panel settings-card integration-card">
+          <p class="card-number">05</p><h3>Community customization</h3>
+          <p class="hint integration-copy">Rules change routing without changing the downloader core. Cookie profiles reference Netscape-format files mounted under <code>/config/cookies</code>; exports never contain those files or other secrets.</p>
+          <div class="toggle-grid">
+            <label class="toggle"><input id="feature-downloads" type="checkbox"><span>Downloads</span></label>
+            <label class="toggle"><input id="feature-audio" type="checkbox"><span>Audio mode</span></label>
+            <label class="toggle"><input id="feature-schedules" type="checkbox"><span>Schedules</span></label>
+            <label class="toggle"><input id="feature-duplicates" type="checkbox"><span>Duplicate review</span></label>
+            <label class="toggle"><input id="feature-storage" type="checkbox"><span>Storage review</span></label>
+            <label class="toggle"><input id="feature-plugins" type="checkbox"><span>Plugins</span></label>
+            <label class="toggle"><input id="feature-webhooks" type="checkbox"><span>Webhooks</span></label>
+            <label class="toggle"><input id="feature-stash" type="checkbox"><span>Stash sync</span></label>
+          </div>
+          <label for="routing-rules">Routing rules <span class="hint">JSON list</span></label>
+          <textarea id="routing-rules" rows="9" spellcheck="false" placeholder='[{"name":"YouTube playlists","host":"youtube.com","url_contains":"/playlist","recipe_id":"balanced-1080","library_id":"stash","enabled":true}]'></textarea>
+          <label for="cookie-profiles">Cookie profiles <span class="hint">JSON list; filenames only</span></label>
+          <textarea id="cookie-profiles" rows="6" spellcheck="false" placeholder='[{"id":"youtube","name":"YouTube","filename":"youtube.txt","enabled":true}]'></textarea>
+          <div class="integration-buttons">
+            <a class="button-link" href="/api/config/export">Export community config</a>
+            <label class="button-link file-button">Import config<input id="config-import" type="file" accept="application/json,.json"></label>
+          </div>
+          <p id="community-message" class="message"></p>
         </section>
         <div class="settings-actions">
           <button type="submit" class="primary">Save settings</button>

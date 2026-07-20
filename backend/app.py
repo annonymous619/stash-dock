@@ -27,8 +27,9 @@ from pydantic import BaseModel, Field
 
 from stash_integration import synchronize
 from advanced import (
-    advanced_settings, duplicate_groups, emit_webhooks, index_paths,
-    init_advanced_storage, load_plugins, safe_library_root, storage_candidates,
+    advanced_settings, cookie_file, duplicate_groups, emit_webhooks, index_paths,
+    init_advanced_storage, load_plugins, match_rule, safe_library_root,
+    storage_candidates,
 )
 
 APP_ROOT = Path(__file__).resolve().parent
@@ -55,7 +56,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.5.0")
+app = FastAPI(title="Stash Dock", version="0.6.0")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -68,6 +69,7 @@ class DownloadRequest(BaseModel):
     authorized: bool
     recipe_id: str = Field(default="original", max_length=80)
     library_id: str = Field(default="stash", max_length=80)
+    scheduled_at: int | None = Field(default=None, ge=0)
 
 
 class AdvancedSettingsRequest(BaseModel):
@@ -76,6 +78,13 @@ class AdvancedSettingsRequest(BaseModel):
     webhooks: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
     storage_policy: dict[str, Any]
     plugins_enabled: bool = True
+    rules: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    cookie_profiles: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
+    feature_toggles: dict[str, bool] = Field(default_factory=dict)
+
+
+class ConfigImportRequest(BaseModel):
+    bundle: dict[str, Any]
 
 
 class SettingsRequest(BaseModel):
@@ -236,19 +245,23 @@ def append_log(job_id: str, line: str) -> None:
 
 
 def job_command(engine: str, url: str, host: str, mode: str,
-                recipe_id: str = "original", library_id: str = "stash") -> list[str]:
+                recipe_id: str = "original", library_id: str = "stash",
+                cookie_profile: str = "") -> list[str]:
     settings = load_settings()
     advanced = advanced_settings(settings)
     recipe = next((item for item in advanced["recipes"] if item.get("id") == recipe_id), advanced["recipes"][0])
     root = safe_library_root(DOWNLOAD_ROOT, advanced, library_id)
+    cookies = cookie_file(CONFIG_ROOT, advanced, cookie_profile)
     site = site_name(host)
     label = settings.get("site_labels", {}).get(site, site)
     if engine == "gallery-dl":
-        return [
+        command = [
             "gallery-dl", "--config", str(CONFIG_ROOT / "gallery-dl.conf"),
             "--directory", str(root),
-            url,
         ]
+        if cookies:
+            command += ["--cookies", str(cookies)]
+        return command + [url]
     creator = (
         "%(uploader,channel,creator,artist,uploader_id,channel_id|"
         + settings.get("unknown_creator_label", "Unknown Creator")
@@ -268,6 +281,8 @@ def job_command(engine: str, url: str, host: str, mode: str,
         "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
         "--embed-metadata", "--embed-thumbnail", "-o", template,
     ]
+    if cookies:
+        command += ["--cookies", str(cookies)]
     if mode == "audio":
         command += ["-x", "--audio-format", "mp3", "--audio-quality", "0"]
     elif recipe.get("format") not in {"best", "original", None}:
@@ -277,8 +292,10 @@ def job_command(engine: str, url: str, host: str, mode: str,
 
 
 def run_engine(job_id: str, engine: str, url: str, host: str, mode: str,
-               recipe_id: str, library_id: str) -> int:
-    command = job_command(engine, url, host, mode, recipe_id, library_id)
+               recipe_id: str, library_id: str, cookie_profile: str) -> int:
+    command = job_command(
+        engine, url, host, mode, recipe_id, library_id, cookie_profile
+    )
     append_log(job_id, f"Using {engine}: {shlex.join(command[:-1])} [URL]")
     process = subprocess.Popen(
         command,
@@ -410,7 +427,8 @@ def process_job(job_id: str) -> None:
             break
         used_engine = engine
         code = run_engine(job_id, engine, row["url"], row["host"], row["requested_mode"],
-                          row["recipe_id"] or "original", row["library_id"] or "stash")
+                          row["recipe_id"] or "original", row["library_id"] or "stash",
+                          row["cookie_profile"] or "")
         new_files = snapshot_files() - before
         if code == 0 and new_files:
             success = True
@@ -444,7 +462,9 @@ def process_job(job_id: str) -> None:
             stats = index_paths(connection, DOWNLOAD_ROOT, [Path(item) for item in created])
         append_log(job_id, f"Duplicate analysis: {json.dumps(stats, sort_keys=True)}")
     settings = load_settings()
-    if status == "completed" and settings.get("sync_enabled") and settings.get("api_key"):
+    if (status == "completed" and settings.get("sync_enabled")
+            and settings.get("api_key")
+            and advanced_settings(settings)["feature_toggles"].get("stash_sync", True)):
         stash_queue.put(job_id)
     if status in {"completed", "failed"}:
         threading.Thread(
@@ -469,6 +489,23 @@ def worker() -> None:
                 )
         finally:
             jobs_queue.task_done()
+
+
+def schedule_worker() -> None:
+    while True:
+        now = int(time.time())
+        with db() as connection:
+            due = connection.execute(
+                """SELECT id FROM jobs WHERE status='scheduled'
+                   AND scheduled_at<=? ORDER BY scheduled_at LIMIT 20""", (now,)
+            ).fetchall()
+            for row in due:
+                connection.execute(
+                    "UPDATE jobs SET status='queued' WHERE id=?", (row["id"],)
+                )
+                cancel_events[row["id"]] = threading.Event()
+                jobs_queue.put(row["id"])
+        time.sleep(15)
 
 
 def stash_worker() -> None:
@@ -497,6 +534,7 @@ def stash_worker() -> None:
 def startup() -> None:
     init_storage()
     threading.Thread(target=worker, daemon=True, name="download-worker").start()
+    threading.Thread(target=schedule_worker, daemon=True, name="schedule-worker").start()
     threading.Thread(target=stash_worker, daemon=True, name="stash-worker").start()
 
 
@@ -539,19 +577,41 @@ def create_job(request: DownloadRequest) -> dict:
     if not request.authorized:
         raise HTTPException(400, "Confirm that you are authorized to save this media.")
     url, host = public_http_url(request.url)
-    engine = choose_engine(host, url, request.mode)
+    advanced = advanced_settings(load_settings())
+    toggles = advanced.get("feature_toggles", {})
+    if not toggles.get("downloads", True):
+        raise HTTPException(503, "Downloads are disabled by the administrator.")
+    if request.mode == "audio" and not toggles.get("audio_mode", True):
+        raise HTTPException(400, "Audio mode is disabled.")
+    if request.scheduled_at and not toggles.get("schedules", True):
+        raise HTTPException(400, "Scheduled downloads are disabled.")
+    rule = match_rule(advanced, host, url, request.mode)
+    mode = str(rule.get("force_mode", request.mode))
+    recipe_id = str(rule.get("recipe_id", request.recipe_id))
+    library_id = str(rule.get("library_id", request.library_id))
+    cookie_profile = str(rule.get("cookie_profile", ""))
+    safe_library_root(DOWNLOAD_ROOT, advanced, library_id)
+    engine = choose_engine(host, url, mode)
     job_id = uuid.uuid4().hex[:12]
     cancel_events[job_id] = threading.Event()
+    scheduled = bool(request.scheduled_at and request.scheduled_at > int(time.time()))
+    status = "scheduled" if scheduled else "queued"
     with db() as connection:
         connection.execute(
             """INSERT INTO jobs
-               (id,url,host,requested_mode,engine,status,created_at,recipe_id,library_id)
-               VALUES (?,?,?,?,?,'queued',?,?,?)""",
-            (job_id, url, host, request.mode, engine, int(time.time()),
-             request.recipe_id, request.library_id),
+               (id,url,host,requested_mode,engine,status,created_at,recipe_id,
+                library_id,cookie_profile,scheduled_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (job_id, url, host, mode, engine, status, int(time.time()),
+             recipe_id, library_id, cookie_profile, request.scheduled_at),
         )
-    jobs_queue.put(job_id)
-    return {"id": job_id, "engine": engine, "status": "queued"}
+    if not scheduled:
+        jobs_queue.put(job_id)
+    return {
+        "id": job_id, "engine": engine, "status": status,
+        "rule_applied": bool(rule), "recipe_id": recipe_id,
+        "library_id": library_id,
+    }
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -560,11 +620,18 @@ def cancel_job(job_id: str) -> dict:
     if not event:
         raise HTTPException(404, "Job not found.")
     event.set()
+    with db() as connection:
+        connection.execute(
+            """UPDATE jobs SET status='cancelled',finished_at=?
+               WHERE id=? AND status='scheduled'""", (int(time.time()), job_id)
+        )
     return {"id": job_id, "status": "cancelling"}
 
 
 @app.post("/api/stash/sync", status_code=202)
 def sync_stash() -> dict:
+    if not advanced_settings(load_settings())["feature_toggles"].get("stash_sync", True):
+        raise HTTPException(503, "Stash synchronization is disabled.")
     if not load_settings().get("api_key"):
         raise HTTPException(503, "Stash API key is not configured.")
     sync_id = "stash-sync-" + uuid.uuid4().hex[:8]
@@ -609,6 +676,26 @@ def update_advanced(request: AdvancedSettingsRequest) -> dict:
         safe_library_root(DOWNLOAD_ROOT, value, identifier)
     if not value["libraries"]:
         raise HTTPException(400, "Keep at least one library.")
+    recipe_ids = {str(item.get("id", "")) for item in value["recipes"]}
+    if not recipe_ids or "" in recipe_ids:
+        raise HTTPException(400, "Every recipe needs an ID.")
+    profile_ids: set[str] = set()
+    for profile in value["cookie_profiles"]:
+        identifier = re.sub(
+            r"[^a-z0-9_-]", "-", str(profile.get("id", "")).casefold()
+        ).strip("-")
+        if not identifier or identifier in profile_ids:
+            raise HTTPException(400, "Every cookie profile needs a unique ID.")
+        profile_ids.add(identifier)
+        profile["id"] = identifier
+        profile["filename"] = Path(str(profile.get("filename", ""))).name
+    for rule in value["rules"]:
+        if rule.get("recipe_id") and rule["recipe_id"] not in recipe_ids:
+            raise HTTPException(400, f"Rule references unknown recipe: {rule['recipe_id']}")
+        if rule.get("library_id") and rule["library_id"] not in ids:
+            raise HTTPException(400, f"Rule references unknown library: {rule['library_id']}")
+        if rule.get("cookie_profile") and rule["cookie_profile"] not in profile_ids:
+            raise HTTPException(400, f"Rule references unknown cookie profile: {rule['cookie_profile']}")
     old_hooks = {item.get("id"): item for item in advanced_settings(current)["webhooks"]}
     for hook in value["webhooks"]:
         if not hook.get("secret"):
@@ -628,6 +715,8 @@ def import_library() -> dict:
 
 @app.get("/api/duplicates")
 def duplicates() -> dict:
+    if not advanced_settings(load_settings())["feature_toggles"].get("duplicate_review", True):
+        raise HTTPException(503, "Duplicate review is disabled.")
     with db() as connection:
         groups = duplicate_groups(connection)
     return {"groups": groups, "count": len(groups)}
@@ -635,6 +724,8 @@ def duplicates() -> dict:
 
 @app.get("/api/storage/candidates")
 def review_storage() -> dict:
+    if not advanced_settings(load_settings())["feature_toggles"].get("storage_review", True):
+        raise HTTPException(503, "Storage review is disabled.")
     policy = advanced_settings(load_settings())["storage_policy"]
     with db() as connection:
         candidates = storage_candidates(connection, policy)
@@ -644,8 +735,72 @@ def review_storage() -> dict:
 
 @app.get("/api/plugins")
 def plugins() -> dict:
+    if not advanced_settings(load_settings())["feature_toggles"].get("plugins", True):
+        raise HTTPException(503, "Plugins are disabled.")
     return {"plugins": load_plugins(CONFIG_ROOT),
             "format": "Declarative JSON only; plugins cannot execute code."}
+
+
+@app.get("/api/config/export")
+def export_config() -> JSONResponse:
+    settings = load_settings()
+    bundle = {
+        "schema_version": 1,
+        "exported_at": int(time.time()),
+        "app": "Stash Dock",
+        "app_version": app.version,
+        "core": {
+            key: settings.get(key, DEFAULT_SETTINGS[key])
+            for key in (
+                "sync_enabled", "scan_wait_seconds", "unknown_creator_label",
+                "folder_layout", "gallery_hosts", "video_hosts", "site_labels",
+            )
+        },
+        "advanced": advanced_settings(settings),
+    }
+    for hook in bundle["advanced"]["webhooks"]:
+        hook.pop("secret", None)
+        hook["enabled"] = False
+    bundle["advanced"]["cookie_notice"] = (
+        "Cookie files and account credentials are never included in exports."
+    )
+    return JSONResponse(
+        bundle,
+        headers={"Content-Disposition": "attachment; filename=stash-dock-community-config.json"},
+    )
+
+
+@app.post("/api/config/import")
+def import_config(request: ConfigImportRequest) -> dict:
+    bundle = request.bundle
+    if bundle.get("schema_version") != 1 or not isinstance(bundle.get("advanced"), dict):
+        raise HTTPException(400, "This is not a supported Stash Dock configuration bundle.")
+    current = load_settings()
+    core = bundle.get("core", {})
+    allowed_core = {
+        "sync_enabled", "scan_wait_seconds", "unknown_creator_label",
+        "folder_layout", "gallery_hosts", "video_hosts", "site_labels",
+    }
+    for key in allowed_core:
+        if key in core:
+            current[key] = core[key]
+    imported = bundle["advanced"]
+    imported.pop("cookie_notice", None)
+    for hook in imported.get("webhooks", []):
+        hook.pop("secret", None)
+        hook["enabled"] = False
+    validated = AdvancedSettingsRequest.model_validate(imported)
+    update_advanced(validated)
+    current = load_settings()
+    for key in allowed_core:
+        if key in core:
+            current[key] = core[key]
+    save_settings(current)
+    return {
+        "imported": True,
+        "secrets_imported": False,
+        "note": "Stash keys, webhook secrets, passwords, and cookie contents were not imported.",
+    }
 
 
 @app.put("/api/settings")

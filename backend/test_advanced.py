@@ -5,7 +5,7 @@ from pathlib import Path
 
 from advanced import (
     DEFAULT_ADVANCED, duplicate_groups, index_paths, init_advanced_storage,
-    safe_library_root,
+    match_rule, safe_library_root,
 )
 
 
@@ -38,6 +38,20 @@ class AdvancedFeaturesTests(unittest.TestCase):
             groups = duplicate_groups(connection)
             self.assertEqual(len(groups), 1)
             self.assertEqual(groups[0]["kind"], "exact")
+
+    def test_declarative_rules_merge_in_order(self):
+        settings = {**DEFAULT_ADVANCED, "rules": [
+            {"host": "youtube.com", "recipe_id": "balanced-1080", "enabled": True},
+            {"host": "youtube.com", "url_contains": "/playlist",
+             "library_id": "video", "tags": ["Playlist"], "enabled": True},
+        ]}
+        result = match_rule(
+            settings, "www.youtube.com",
+            "https://www.youtube.com/playlist?list=abc", "auto",
+        )
+        self.assertEqual(result["recipe_id"], "balanced-1080")
+        self.assertEqual(result["library_id"], "video")
+        self.assertEqual(result["tags"], ["Playlist"])
 
 
 if __name__ == "__main__":

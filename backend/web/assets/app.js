@@ -20,6 +20,22 @@ async function loadAdvanced() {
   advanced = await (await fetch("/api/advanced")).json();
   $("#recipe").innerHTML = advanced.recipes.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
   $("#library").innerHTML = advanced.libraries.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+  const features = advanced.feature_toggles || {};
+  [["downloads","feature-downloads"],["audio_mode","feature-audio"],["schedules","feature-schedules"],
+   ["duplicate_review","feature-duplicates"],["storage_review","feature-storage"],["plugins","feature-plugins"],
+   ["webhooks","feature-webhooks"],["stash_sync","feature-stash"]].forEach(([key,id]) => {
+    const element = $(`#${id}`); if (element) element.checked = features[key] !== false;
+  });
+  if ($("#routing-rules")) $("#routing-rules").value = JSON.stringify(advanced.rules || [], null, 2);
+  if ($("#cookie-profiles")) $("#cookie-profiles").value = JSON.stringify(advanced.cookie_profiles || [], null, 2);
+  const audioChoice = document.querySelector('input[name="mode"][value="audio"]')?.closest("label");
+  if (audioChoice) audioChoice.hidden = features.audio_mode === false;
+  $("#schedule-at").disabled = features.schedules === false;
+  $("#schedule-at").previousElementSibling.hidden = features.schedules === false;
+  $("#download-form").querySelector('[type="submit"]').disabled = features.downloads === false;
+  $("#scan-duplicates").hidden = features.duplicate_review === false;
+  $("#review-storage").hidden = features.storage_review === false;
+  $("#load-plugins").hidden = features.plugins === false;
 }
 
 async function loadJobs() {
@@ -49,11 +65,12 @@ $("#download-form").addEventListener("submit", async event => {
   try {
     const response = await fetch("/api/jobs", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
       url: $("#url").value, mode: new FormData(event.currentTarget).get("mode"), authorized: $("#authorized").checked,
-      recipe_id: $("#recipe").value || "original", library_id: $("#library").value || "stash"
+      recipe_id: $("#recipe").value || "original", library_id: $("#library").value || "stash",
+      scheduled_at: $("#schedule-at").value ? Math.floor(new Date($("#schedule-at").value).getTime()/1000) : null
     })});
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || "Could not start the download.");
-    message($("#message"), `Queued with ${result.engine}.`, true);
+    message($("#message"), result.status === "scheduled" ? "Scheduled successfully." : `Queued with ${result.engine}.`, true);
     $("#url").value = "";
     await loadJobs();
   } catch (error) { message($("#message"), error.message); }
@@ -92,6 +109,12 @@ $("#settings-form").addEventListener("submit", async event => {
     const [key, ...rest] = row.split("=");
     return [key.trim(), rest.join("=").trim()];
   }).filter(([key,value]) => key && value));
+  let rules, profiles;
+  try {
+    rules = JSON.parse($("#routing-rules").value || "[]");
+    profiles = JSON.parse($("#cookie-profiles").value || "[]");
+    if (!Array.isArray(rules) || !Array.isArray(profiles)) throw new Error();
+  } catch { return message($("#community-message"), "Rules and cookie profiles must be valid JSON lists."); }
   const response = await fetch("/api/settings", {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
     stash_url:$("#stash-url").value, api_key:$("#api-key").value, sync_enabled:$("#sync-enabled").checked,
     scan_wait_seconds:Number($("#scan-wait").value), folder_layout:$("#folder-layout").value,
@@ -100,8 +123,31 @@ $("#settings-form").addEventListener("submit", async event => {
   })});
   const result = await response.json();
   if (!response.ok) return message($("#settings-message"), result.detail || "Could not save settings.");
+  const advancedPayload = {...advanced, rules, cookie_profiles:profiles, feature_toggles:{
+    downloads:$("#feature-downloads").checked, audio_mode:$("#feature-audio").checked,
+    schedules:$("#feature-schedules").checked, duplicate_review:$("#feature-duplicates").checked,
+    storage_review:$("#feature-storage").checked, plugins:$("#feature-plugins").checked,
+    webhooks:$("#feature-webhooks").checked, stash_sync:$("#feature-stash").checked
+  }};
+  const advancedResponse = await fetch("/api/advanced", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(advancedPayload)});
+  const advancedResult = await advancedResponse.json();
+  if (!advancedResponse.ok) return message($("#community-message"), advancedResult.detail || "Could not save community settings.");
   message($("#settings-message"), "Settings saved.", true);
+  message($("#community-message"), "Community settings saved.", true);
   loadSettings(); loadJobs();
+});
+
+$("#config-import").addEventListener("change", async event => {
+  const file = event.target.files[0]; if (!file) return;
+  try {
+    const bundle = JSON.parse(await file.text());
+    const response = await fetch("/api/config/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bundle})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "Import failed.");
+    message($("#community-message"), "Configuration imported without secrets. Review and save your settings.", true);
+    await loadAdvanced(); await loadSettings();
+  } catch(error) { message($("#community-message"), error.message || "That file is not valid JSON."); }
+  event.target.value = "";
 });
 
 $("#test-stash").addEventListener("click", async () => {
