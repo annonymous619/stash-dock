@@ -12,7 +12,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir --upgrade gallery-dl yt-dlp
+    && pip install --no-cache-dir --upgrade gallery-dl "yt-dlp[default,curl-cffi]"
 
 COPY backend/ /app/
 RUN mkdir -p /config /downloads \
