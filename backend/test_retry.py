@@ -201,6 +201,28 @@ class RetryJobTests(unittest.TestCase):
         self.assertEqual(repeated["status"], "completed")
         self.assertIn("archive prevented duplicates", repeated["log"])
 
+    def test_ytdlp_command_emits_paced_live_progress(self):
+        settings = {**app_module.DEFAULT_SETTINGS, "gallery_hosts": []}
+        with patch.object(app_module, "load_settings", return_value=settings):
+            command = app_module.job_command(
+                "yt-dlp", "https://example.com/video", "example.com", "video"
+            )
+        self.assertIn("--progress", command)
+        self.assertIn("--newline", command)
+        self.assertEqual(command[command.index("--progress-delta") + 1], "1")
+        self.assertNotIn("--no-progress", command)
+
+    def test_gallery_command_reports_each_prepared_file_without_verbose_secrets(self):
+        settings = {**app_module.DEFAULT_SETTINGS}
+        with patch.object(app_module, "load_settings", return_value=settings):
+            command = app_module.job_command(
+                "gallery-dl", "https://example.com/gallery", "example.com", "gallery"
+            )
+        self.assertIn("--Print", command)
+        self.assertIn("[gallery] preparing {filename}.{extension}", command)
+        self.assertIn("--no-colors", command)
+        self.assertNotIn("--verbose", command)
+
 
 if __name__ == "__main__":
     unittest.main()

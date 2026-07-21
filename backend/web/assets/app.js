@@ -141,7 +141,8 @@ function renderLog() {
     $("#log-content").textContent = "Logs will appear here while downloads and Stash synchronization run.";
     return;
   }
-  $("#log-state").textContent = `${job.status.toUpperCase()} · ${job.engine} · ${job.host} · ${new Date(job.created_at * 1000).toLocaleString()}`;
+  const activity = ["queued", "running", "scheduled"].includes(job.status) ? "LIVE · updates every 2 seconds" : "FINISHED";
+  $("#log-state").textContent = `${job.status.toUpperCase()} · ${activity} · ${job.engine} · ${job.host} · ${new Date(job.created_at * 1000).toLocaleString()}`;
   $("#log-content").textContent = filteredLog(job);
   if (document.body.classList.contains("logs-open")) $("#log-content").scrollTop = $("#log-content").scrollHeight;
 }
@@ -475,5 +476,5 @@ $("#load-plugins").addEventListener("click", async () => {
 $("#refresh").addEventListener("click", loadJobs);
 $("#reload-diagnostics").addEventListener("click", loadDiagnostics);
 Promise.all([loadAdvanced(), loadJobs()]);
-setInterval(loadJobs, 3000);
+setInterval(loadJobs, 2000);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/service-worker.js");

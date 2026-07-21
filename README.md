@@ -287,3 +287,11 @@ can discover later uploads, while the gallery-dl and yt-dlp archives skip items
 that were already saved. If every item is already archived, the history check
 completes as **no new media** rather than failing or falling back to another
 engine that could create duplicate files.
+
+## 0.8.4 live download progress
+
+Live logs now refresh every two seconds while a job is active. yt-dlp reports
+percentage, downloaded size, speed, and ETA as newline-delimited progress at a
+one-second interval. gallery-dl reports each file it prepares without enabling
+verbose request debugging that could expose sensitive session details. Every
+engine also writes explicit start and exit-code messages to the job log.

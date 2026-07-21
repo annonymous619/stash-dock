@@ -60,7 +60,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.8.3")
+app = FastAPI(title="Stash Dock", version="0.8.4")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -330,7 +330,8 @@ def job_command(engine: str, url: str, host: str, mode: str,
     if engine == "gallery-dl":
         command = [
             "gallery-dl", "--config", str(CONFIG_ROOT / "gallery-dl.conf"),
-            "--directory", str(root),
+            "--directory", str(root), "--no-colors",
+            "--Print", "[gallery] preparing {filename}.{extension}",
         ]
         if cookies:
             command += ["--cookies", str(cookies)]
@@ -350,7 +351,8 @@ def job_command(engine: str, url: str, host: str, mode: str,
     }[layout]
     template = str(root.joinpath(*parts) / f"{title}.%(ext)s")
     command = [
-        "yt-dlp", "--newline", "--no-progress", "--continue",
+        "yt-dlp", "--newline", "--progress", "--progress-delta", "1",
+        "--continue",
         "--no-overwrites", "--download-archive", str(CONFIG_ROOT / "yt-dlp-archive.txt"),
         "--write-info-json", "--write-thumbnail", "--convert-thumbnails", "jpg",
         "--embed-metadata", "--embed-thumbnail", "-o", template,
@@ -431,6 +433,7 @@ def run_engine(job_id: str, engine: str, url: str, host: str, mode: str,
         max_items, date_after, date_before,
     )
     append_log(job_id, f"Using {engine}: {shlex.join(command[:-1])} [URL]")
+    append_log(job_id, f"Starting {engine}; live progress will appear below.")
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -446,7 +449,9 @@ def run_engine(job_id: str, engine: str, url: str, host: str, mode: str,
             process.terminate()
             append_log(job_id, "Cancellation requested.")
             break
-    return process.wait()
+    exit_code = process.wait()
+    append_log(job_id, f"{engine} process finished with exit code {exit_code}.")
+    return exit_code
 
 
 def snapshot_files() -> set[str]:
