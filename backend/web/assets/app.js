@@ -27,11 +27,14 @@ let preflightResult = null;
 
 // Themes are intentionally device-local. Server settings and download jobs remain shared.
 const THEMES = new Set(["ops", "media", "command"]);
+const THEME_COLORS = { ops: "#091018", media: "#0b0c16", command: "#0d0f0c" };
 const applyTheme = requested => {
   const theme = THEMES.has(requested) ? requested : "ops";
   document.documentElement.dataset.theme = theme;
   localStorage.setItem("stashDockTheme", theme);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLORS[theme]);
   if ($("#theme-select")) $("#theme-select").value = theme;
+  if ($("#theme-quick-select")) $("#theme-quick-select").value = theme;
   document.querySelectorAll(".theme-option").forEach(option => {
     const active = option.dataset.themeOption === theme;
     option.classList.toggle("active", active);
@@ -40,9 +43,12 @@ const applyTheme = requested => {
 };
 applyTheme(localStorage.getItem("stashDockTheme") || document.documentElement.dataset.theme);
 $("#theme-select").addEventListener("change", event => applyTheme(event.target.value));
+$("#theme-quick-select").addEventListener("change", event => applyTheme(event.target.value));
 document.querySelectorAll(".theme-option").forEach(option => option.addEventListener("click", () => {
   applyTheme(option.dataset.themeOption);
 }));
+window.addEventListener("pageshow", () => applyTheme(localStorage.getItem("stashDockTheme") || "ops"));
+window.addEventListener("storage", event => { if (event.key === "stashDockTheme") applyTheme(event.newValue); });
 
 const viewLabels = {
   downloads: ["DOWNLOAD CONTROL", "Downloads"],
@@ -66,7 +72,7 @@ async function loadAdvanced() {
     $("#recipe").innerHTML = advanced.recipes.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
     $("#library").innerHTML = advanced.libraries.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
     const features = advanced.feature_toggles || {};
-    [["downloads", "feature-downloads"], ["audio_mode", "feature-audio"], ["schedules", "feature-schedules"],
+    [["downloads", "feature-downloads"], ["audio_mode", "feature-audio"],
       ["duplicate_review", "feature-duplicates"], ["storage_review", "feature-storage"], ["plugins", "feature-plugins"],
       ["webhooks", "feature-webhooks"], ["stash_sync", "feature-stash"]].forEach(([key, id]) => {
       const element = $(`#${id}`);
@@ -76,8 +82,6 @@ async function loadAdvanced() {
     $("#cookie-profiles").value = JSON.stringify(advanced.cookie_profiles || [], null, 2);
     const audioChoice = document.querySelector('input[name="mode"][value="audio"]')?.closest("label");
     if (audioChoice) audioChoice.hidden = features.audio_mode === false;
-    $("#schedule-at").disabled = features.schedules === false;
-    $("#schedule-at").previousElementSibling.hidden = features.schedules === false;
     $("#analyze").disabled = features.downloads === false;
     $("#scan-duplicates").hidden = features.duplicate_review === false;
     $("#review-storage").hidden = features.storage_review === false;
@@ -252,11 +256,11 @@ $("#queue-download").addEventListener("click", async () => {
       body: JSON.stringify({
         url: $("#url").value, mode: new FormData($("#download-form")).get("mode"), authorized: $("#authorized").checked,
         recipe_id: $("#recipe").value || "original", library_id: $("#library").value || "stash",
-        scheduled_at: $("#schedule-at").value ? Math.floor(new Date($("#schedule-at").value).getTime() / 1000) : null,
+        scheduled_at: null,
         max_items: maxItems, date_after: $("#date-after").value, date_before: $("#date-before").value
       })
     });
-    message($("#message"), result.status === "scheduled" ? "Scheduled successfully." : `Queued with ${result.engine}.`, true);
+    message($("#message"), `Queued with ${result.engine}.`, true);
     $("#url").value = "";
     $("#authorized").checked = false;
     invalidatePreflight();
@@ -308,7 +312,7 @@ $("#settings-form").addEventListener("submit", async event => {
     }) });
     const advancedPayload = { ...advanced, rules, cookie_profiles: profiles, feature_toggles: {
       downloads: $("#feature-downloads").checked, audio_mode: $("#feature-audio").checked,
-      schedules: $("#feature-schedules").checked, duplicate_review: $("#feature-duplicates").checked,
+      schedules: false, duplicate_review: $("#feature-duplicates").checked,
       storage_review: $("#feature-storage").checked, plugins: $("#feature-plugins").checked,
       webhooks: $("#feature-webhooks").checked, stash_sync: $("#feature-stash").checked
     } };

@@ -164,9 +164,8 @@ Version 0.6 makes Stash Dock customizable without forking its download core:
 - **Cookie profiles** reference Netscape-format cookie files beneath
   `/config/cookies`. Passwords are never stored by Stash Dock, cookie contents
   never appear in the WebUI, and configuration exports include filenames only.
-- **Schedules** keep a job in `scheduled` state until the selected Unix timestamp.
 - **Feature toggles** let an installation enable or hide downloads, audio,
-  schedules, duplicate/storage review, plugins, webhooks, and Stash sync.
+  duplicate/storage review, plugins, webhooks, and Stash sync.
 - **Community bundles** export and import routing configuration as JSON. Stash API
   keys, integration keys, webhook secrets, passwords, and cookie contents are
   deliberately excluded.
@@ -241,3 +240,22 @@ The theme preference is saved in that browser only. Server-side settings, jobs,
 recipes, libraries, and Stash synchronization remain shared between devices.
 Live logs can be opened from the sidebar, mobile header, queue header, or an
 individual job, then filtered to warnings, downloader output, or Stash activity.
+
+## 0.8 focused dashboard and instant themes
+
+Version 0.8 replaces the oversized introduction with a compact download workspace.
+The primary screen now keeps the link form, preflight result, and recent queue in
+one predictable flow. Scheduling was removed from the WebUI so new downloads are
+queued immediately. The backend continues to understand older scheduled records
+for compatibility, but new browser-created jobs do not create them.
+
+The three device-local themes now keep the same navigation and log layout while
+changing the complete visual palette:
+
+- **Midnight** uses navy surfaces with coral and teal accents.
+- **Studio** uses violet surfaces with a bright teal secondary accent.
+- **Carbon** uses near-black surfaces with amber and lime accents.
+
+An always-visible theme selector applies the choice immediately. Versioned CSS and
+JavaScript assets plus a new service-worker cache prevent an older installed WebUI
+from masking theme updates after an upgrade.

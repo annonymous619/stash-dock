@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#091018">
   <link rel="manifest" href="/manifest.webmanifest">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("stashDockTheme")||"ops"}catch(e){}</script>
-  <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/app.css?v=0.8.0">
 </head>
 <body>
   <div class="app-shell">
@@ -21,25 +21,28 @@
       </nav>
       <div class="sidebar-footer">
         <button id="toggle-logs" class="sidebar-action" aria-controls="log-drawer" aria-expanded="false"><span class="live-dot"></span> Live logs</button>
-        <p>Stash Dock <b>0.7</b></p>
+        <p>Stash Dock <b>0.8</b></p>
       </div>
     </aside>
 
     <main class="workspace">
       <header class="topbar">
         <div><p class="eyebrow" id="view-eyebrow">DOWNLOAD CONTROL</p><h2 id="view-title">Downloads</h2></div>
-        <div class="topbar-actions"><span id="health" class="health">Connecting</span><button id="mobile-log-toggle" class="quiet">Logs</button></div>
+        <div class="topbar-actions">
+          <label class="quick-theme" for="theme-quick-select"><span>Theme</span><select id="theme-quick-select"><option value="ops">Midnight</option><option value="media">Studio</option><option value="command">Carbon</option></select></label>
+          <span id="health" class="health">Connecting</span><button id="mobile-log-toggle" class="quiet">Logs</button>
+        </div>
       </header>
 
       <section id="downloads-view" class="view active">
-        <div class="intro-grid">
-          <div class="intro-copy"><p class="eyebrow accent">SMART ROUTING</p><h3>Inspect first.<br>Download with confidence.</h3><p>Stash Dock chooses the right engine, previews large collections, organizes every creator, and keeps Stash updated.</p></div>
-          <div class="pipeline-card"><p class="eyebrow">PIPELINE</p><div><span class="pipeline-step ready">1</span><b>Inspect</b><i></i><span class="pipeline-step">2</span><b>Download</b><i></i><span class="pipeline-step">3</span><b>Stash</b></div><p class="hint">Preflight catches large collections and access problems before they become surprise jobs.</p></div>
+        <div class="dashboard-intro">
+          <div><p class="eyebrow accent">SMART MEDIA INTAKE</p><h3>Start a download</h3><p>Paste a link, inspect what was found, then send it to your organized library.</p></div>
+          <div class="flow-strip" aria-label="Download workflow"><span class="active">1</span><b>Link</b><i></i><span>2</span><b>Review</b><i></i><span>3</span><b>Library</b></div>
         </div>
 
         <div class="download-grid">
           <form id="download-form" class="panel intake-panel">
-            <div class="panel-heading"><div><p class="eyebrow">NEW INTAKE</p><h3>Analyze a link</h3></div><span class="engine-badge">AUTO</span></div>
+            <div class="panel-heading"><div><p class="eyebrow">NEW DOWNLOAD</p><h3>What would you like to save?</h3></div><span class="engine-badge">AUTO ROUTING</span></div>
             <label for="url">Media or creator URL</label>
             <div class="url-row"><input id="url" name="url" type="url" placeholder="https://example.com/creator/videos" required><button type="submit" id="analyze" class="primary">Preflight <b>→</b></button></div>
             <div class="selectors"><label>Recipe<select id="recipe"></select></label><label>Library<select id="library"></select></label></div>
@@ -49,8 +52,6 @@
               <label><input type="radio" name="mode" value="video"><span>Video</span></label>
               <label><input type="radio" name="mode" value="audio"><span>Audio</span></label>
             </div>
-            <label for="schedule-at">Schedule for later <span class="hint">optional, your browser time</span></label>
-            <input id="schedule-at" type="datetime-local">
             <p id="message" class="message" role="status"></p>
           </form>
 
@@ -82,19 +83,19 @@
       <section id="settings-view" class="view">
         <div class="page-intro"><p class="eyebrow accent">CONFIGURATION</p><h3>Make it yours.</h3><p>Connection and downloader settings are shared. Your visual theme stays on this device.</p></div>
         <form id="settings-form" class="settings-grid">
-          <section class="panel settings-card theme-card"><p class="card-number">01</p><h3>Interface theme</h3><p class="hint">Each theme changes color, density, navigation and log placement.</p>
+          <section class="panel settings-card theme-card"><p class="card-number">01</p><h3>Interface theme</h3><p class="hint">Each theme changes the complete color palette while keeping the layout familiar.</p>
             <div class="theme-picker">
-              <button type="button" class="theme-option" data-theme-option="ops"><span class="theme-preview ops-preview"></span><b>Midnight Ops</b><small>Dense operations console</small></button>
-              <button type="button" class="theme-option" data-theme-option="media"><span class="theme-preview media-preview"></span><b>Media Workspace</b><small>Spacious and mobile-first</small></button>
-              <button type="button" class="theme-option" data-theme-option="command"><span class="theme-preview command-preview"></span><b>Command Rail</b><small>Persistent right-side logs</small></button>
+              <button type="button" class="theme-option" data-theme-option="ops"><span class="theme-preview ops-preview"></span><b>Midnight</b><small>Navy with warm coral</small></button>
+              <button type="button" class="theme-option" data-theme-option="media"><span class="theme-preview media-preview"></span><b>Studio</b><small>Violet with cool teal</small></button>
+              <button type="button" class="theme-option" data-theme-option="command"><span class="theme-preview command-preview"></span><b>Carbon</b><small>Black with amber and lime</small></button>
             </div>
-            <label for="theme-select">Theme</label><select id="theme-select"><option value="ops">Midnight Operations Console</option><option value="media">Midnight Media Workspace</option><option value="command">Command Rail</option></select>
+            <label for="theme-select">Theme</label><select id="theme-select"><option value="ops">Midnight</option><option value="media">Studio</option><option value="command">Carbon</option></select>
           </section>
           <section class="panel settings-card"><p class="card-number">02</p><h3>Stash connection</h3><label for="stash-url">Stash URL</label><input id="stash-url" type="url" placeholder="http://stash:9999" required><label for="api-key">API key</label><input id="api-key" type="password" placeholder="Leave blank to keep the saved key"><p id="key-state" class="hint">No key saved</p><label class="toggle"><input id="sync-enabled" type="checkbox"><span>Synchronize after every download</span></label><label for="scan-wait">Scan wait (seconds)</label><input id="scan-wait" type="number" min="5" max="300"></section>
           <section class="panel settings-card"><p class="card-number">03</p><h3>Folder structure</h3><label for="folder-layout">Video folder layout</label><select id="folder-layout"><option value="site_creator_title">Site / Creator / Title</option><option value="creator_site_title">Creator / Site / Title</option><option value="creator_title">Creator / Title</option></select><label for="unknown-creator">Unknown creator label</label><input id="unknown-creator" type="text"><label for="site-labels">Site labels <span class="hint">hostname=Folder Name</span></label><textarea id="site-labels" rows="6"></textarea></section>
           <section class="panel settings-card"><p class="card-number">04</p><h3>Routing defaults</h3><label for="gallery-hosts">Gallery-first sites</label><textarea id="gallery-hosts" rows="7"></textarea><label for="video-hosts">Video-first sites</label><textarea id="video-hosts" rows="7"></textarea></section>
           <section class="panel settings-card integration-card"><p class="card-number">05</p><h3>Connect other apps</h3><p class="hint integration-copy">Generate a private key for another Docker app, script, or automation.</p><p id="integration-key-state" class="key-state">No integration key generated</p><div class="integration-buttons"><button type="button" id="generate-integration-key" class="quiet">Generate new key</button><button type="button" id="revoke-integration-key" class="quiet danger">Revoke key</button></div><div id="generated-key-wrap" class="generated-key" hidden><label for="generated-key">Copy this now — it is shown only once</label><div class="copy-row"><input id="generated-key" type="text" readonly><button type="button" id="copy-integration-key" class="quiet">Copy</button></div></div></section>
-          <section class="panel settings-card integration-card"><p class="card-number">06</p><h3>Community customization</h3><p class="hint integration-copy">Rules customize routing without changing the core. Cookie files remain under <code>/config/cookies</code> and are never exported.</p><div class="toggle-grid"><label class="toggle"><input id="feature-downloads" type="checkbox"><span>Downloads</span></label><label class="toggle"><input id="feature-audio" type="checkbox"><span>Audio</span></label><label class="toggle"><input id="feature-schedules" type="checkbox"><span>Schedules</span></label><label class="toggle"><input id="feature-duplicates" type="checkbox"><span>Duplicates</span></label><label class="toggle"><input id="feature-storage" type="checkbox"><span>Storage review</span></label><label class="toggle"><input id="feature-plugins" type="checkbox"><span>Plugins</span></label><label class="toggle"><input id="feature-webhooks" type="checkbox"><span>Webhooks</span></label><label class="toggle"><input id="feature-stash" type="checkbox"><span>Stash sync</span></label></div><label for="routing-rules">Routing rules <span class="hint">JSON list</span></label><textarea id="routing-rules" rows="9" spellcheck="false"></textarea><label for="cookie-profiles">Cookie profiles <span class="hint">JSON list; filenames only</span></label><textarea id="cookie-profiles" rows="6" spellcheck="false"></textarea><div class="integration-buttons"><a class="button-link" href="/api/config/export">Export community config</a><label class="button-link file-button">Import config<input id="config-import" type="file" accept="application/json,.json"></label></div><p id="community-message" class="message"></p></section>
+          <section class="panel settings-card integration-card"><p class="card-number">06</p><h3>Community customization</h3><p class="hint integration-copy">Rules customize routing without changing the core. Cookie files remain under <code>/config/cookies</code> and are never exported.</p><div class="toggle-grid"><label class="toggle"><input id="feature-downloads" type="checkbox"><span>Downloads</span></label><label class="toggle"><input id="feature-audio" type="checkbox"><span>Audio</span></label><label class="toggle"><input id="feature-duplicates" type="checkbox"><span>Duplicates</span></label><label class="toggle"><input id="feature-storage" type="checkbox"><span>Storage review</span></label><label class="toggle"><input id="feature-plugins" type="checkbox"><span>Plugins</span></label><label class="toggle"><input id="feature-webhooks" type="checkbox"><span>Webhooks</span></label><label class="toggle"><input id="feature-stash" type="checkbox"><span>Stash sync</span></label></div><label for="routing-rules">Routing rules <span class="hint">JSON list</span></label><textarea id="routing-rules" rows="9" spellcheck="false"></textarea><label for="cookie-profiles">Cookie profiles <span class="hint">JSON list; filenames only</span></label><textarea id="cookie-profiles" rows="6" spellcheck="false"></textarea><div class="integration-buttons"><a class="button-link" href="/api/config/export">Export community config</a><label class="button-link file-button">Import config<input id="config-import" type="file" accept="application/json,.json"></label></div><p id="community-message" class="message"></p></section>
           <div class="settings-actions"><button type="submit" class="primary compact">Save settings</button><button type="button" id="test-stash" class="quiet">Test Stash</button><button type="button" id="sync-now" class="quiet">Synchronize now</button><p id="settings-message" class="message" role="status"></p></div>
         </form>
       </section>
@@ -111,6 +112,6 @@
     </aside>
     <button id="log-backdrop" class="log-backdrop" aria-label="Close logs"></button>
   </div>
-  <script src="/assets/app.js"></script>
+  <script src="/assets/app.js?v=0.8.0"></script>
 </body>
 </html>
