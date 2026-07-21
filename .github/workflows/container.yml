@@ -24,6 +24,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install test dependencies
+        run: python -m pip install -r backend/requirements.txt
       - name: Validate Python
         run: |
           python -m py_compile backend/app.py backend/advanced.py backend/stash_integration.py
