@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#091018">
   <link rel="manifest" href="/manifest.webmanifest">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("stashDockTheme")||"ops"}catch(e){}</script>
-  <link rel="stylesheet" href="/assets/app.css?v=0.8.2">
+  <link rel="stylesheet" href="/assets/app.css?v=0.8.3">
 </head>
 <body>
   <div class="app-shell">
@@ -21,7 +21,7 @@
       </nav>
       <div class="sidebar-footer">
         <button id="toggle-logs" class="sidebar-action" aria-controls="log-drawer" aria-expanded="false"><span class="live-dot"></span> Live logs</button>
-        <p>Stash Dock <b>0.8.2</b></p>
+        <p>Stash Dock <b>0.8.3</b></p>
       </div>
     </aside>
 
@@ -59,6 +59,11 @@
             <div class="panel-heading"><div><p class="eyebrow">PREFLIGHT</p><h3 id="preflight-title">Ready to inspect</h3></div><span id="preflight-state" class="status queued">WAITING</span></div>
             <div id="preflight-facts" class="fact-grid"></div>
             <div id="preflight-warning" class="notice" hidden></div>
+            <div id="duplicate-warning" class="duplicate-notice" hidden>
+              <p class="eyebrow">HISTORY MATCH</p><h4>Already downloaded</h4>
+              <p id="duplicate-copy"></p>
+              <label class="legal switch-control"><input id="allow-repeat" type="checkbox"><span class="switch-track"></span><span id="repeat-label">Check this URL again</span></label>
+            </div>
             <fieldset class="scope-controls"><legend>Collection limits</legend>
               <div class="selectors"><label>Maximum items<select id="max-items"><option value="">Everything</option><option value="10">Latest 10</option><option value="25">Latest 25</option><option value="50">Latest 50</option><option value="custom">Custom limit</option></select></label><label id="custom-limit-wrap" hidden>Custom limit<input id="custom-limit" type="number" min="1" max="10000" value="100"></label></div>
               <div class="selectors"><label>After date<input id="date-after" type="date"></label><label>Before date<input id="date-before" type="date"></label></div>
@@ -112,6 +117,6 @@
     </aside>
     <button id="log-backdrop" class="log-backdrop" aria-label="Close logs"></button>
   </div>
-  <script src="/assets/app.js?v=0.8.2"></script>
+  <script src="/assets/app.js?v=0.8.3"></script>
 </body>
 </html>

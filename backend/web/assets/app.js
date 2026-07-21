@@ -110,7 +110,7 @@ function renderJobs() {
   $("#job-list").innerHTML = jobsCache.length ? jobsCache.map(job => `
     <article class="job">
       <span class="status ${esc(job.status)}">${esc(job.status)}</span>
-      <div><p class="job-url">${esc(job.url)}</p><p class="meta">${esc(job.engine)} · ${esc(job.host)} · ${new Date(job.created_at * 1000).toLocaleString()}${job.retried_from ? ` · Retry of ${esc(job.retried_from)}` : ""}</p>${job.error ? `<p class="message">${esc(job.error)}</p>` : ""}</div>
+      <div><p class="job-url">${esc(job.url)}</p><p class="meta">${esc(job.engine)} · ${esc(job.host)} · ${new Date(job.created_at * 1000).toLocaleString()}${job.retried_from ? ` · Retry of ${esc(job.retried_from)}` : ""}${job.duplicate_of ? ` · Checked after ${esc(job.duplicate_of)}` : ""}</p>${job.error ? `<p class="message">${esc(job.error)}</p>` : ""}</div>
       <div class="job-actions">${retryAction(job)}${["queued", "running", "scheduled"].includes(job.status) ? `<button class="quiet cancel" data-id="${esc(job.id)}">Cancel</button>` : ""}<button class="quiet view-log" data-id="${esc(job.id)}">View logs</button></div>
     </article>`).join("") : '<p class="empty">No downloads yet. Paste a link above to begin.</p>';
 
@@ -204,13 +204,25 @@ $("#job-list").addEventListener("click", async event => {
 function invalidatePreflight() {
   preflightResult = null;
   $("#preflight-card").hidden = true;
+  $("#duplicate-warning").hidden = true;
+  $("#allow-repeat").checked = false;
   $("#queue-download").disabled = true;
+  $("#queue-download").innerHTML = "Queue download <b>→</b>";
 }
 [$("#url"), $("#recipe"), $("#library")].forEach(element => element.addEventListener("input", invalidatePreflight));
 document.querySelectorAll('input[name="mode"]').forEach(element => element.addEventListener("change", invalidatePreflight));
 
 function fact(label, value) {
   return `<div class="fact"><span>${esc(label)}</span><b title="${esc(value || "Unknown")}">${esc(value || "Unknown")}</b></div>`;
+}
+
+function updateQueueState() {
+  const repeated = Boolean(preflightResult?.previous_download);
+  const allowed = !repeated || $("#allow-repeat").checked;
+  $("#queue-download").disabled = !(preflightResult?.ready && $("#authorized").checked && allowed);
+  $("#queue-download").innerHTML = repeated
+    ? `${preflightResult.repeat_kind === "collection" ? "Check for new items" : "Check URL again"} <b>→</b>`
+    : "Queue download <b>→</b>";
 }
 
 function renderPreflight(result) {
@@ -224,7 +236,8 @@ function renderPreflight(result) {
       fact("Items", result.item_count == null ? "Unknown" : `${result.item_count}${result.count_limited ? "+" : ""}`),
       fact("Engine", result.engine), fact("Type", result.content_kind),
       fact("Free space", bytes(result.free_bytes)), fact("Destination", result.destination),
-      fact("Routing rule", result.rule_applied ? "Applied" : "Default")
+      fact("Routing rule", result.rule_applied ? "Applied" : "Default"),
+      fact("History", result.previous_download ? "Downloaded before" : "New URL")
     ].join("");
   } else {
     const failure = result.failure || {};
@@ -235,7 +248,18 @@ function renderPreflight(result) {
   if (!result.ready && result.details) warnings.push(result.details);
   $("#preflight-warning").hidden = warnings.length === 0;
   $("#preflight-warning").innerHTML = warnings.map(item => `<p>${esc(item)}</p>`).join("");
-  $("#queue-download").disabled = !(result.ready && $("#authorized").checked);
+  const previous = result.previous_download;
+  $("#duplicate-warning").hidden = !previous;
+  $("#allow-repeat").checked = false;
+  if (previous) {
+    const finished = previous.finished_at ? new Date(previous.finished_at * 1000).toLocaleString() : "an earlier job";
+    $("#duplicate-copy").textContent = result.repeat_kind === "collection"
+      ? `This creator or collection completed on ${finished}. Checking again will use the archive and save only new items.`
+      : `This exact URL completed on ${finished}. Checking again will keep the existing file and only save media the archive has not seen.`;
+    $("#repeat-label").textContent = result.repeat_kind === "collection"
+      ? "Check this creator for new media" : "Check this URL again without duplicating saved media";
+  }
+  updateQueueState();
 }
 
 $("#download-form").addEventListener("submit", async event => {
@@ -252,7 +276,9 @@ $("#download-form").addEventListener("submit", async event => {
       })
     });
     renderPreflight(preflightResult);
-    message($("#message"), preflightResult.ready ? `Ready with ${preflightResult.engine}. Review the scope below.` : "Preflight found a problem. Nothing was queued.", preflightResult.ready);
+    message($("#message"), preflightResult.ready
+      ? (preflightResult.previous_download ? "History match found. Confirm below to check for new media." : `Ready with ${preflightResult.engine}. Review the scope below.`)
+      : "Preflight found a problem. Nothing was queued.", preflightResult.ready);
   } catch (error) {
     invalidatePreflight();
     message($("#message"), error.message);
@@ -265,8 +291,9 @@ $("#max-items").addEventListener("change", event => {
   $("#custom-limit-wrap").hidden = event.target.value !== "custom";
 });
 $("#authorized").addEventListener("change", () => {
-  $("#queue-download").disabled = !(preflightResult?.ready && $("#authorized").checked);
+  updateQueueState();
 });
+$("#allow-repeat").addEventListener("change", updateQueueState);
 
 $("#queue-download").addEventListener("click", async () => {
   const selectedLimit = $("#max-items").value;
@@ -279,18 +306,19 @@ $("#queue-download").addEventListener("click", async () => {
       body: JSON.stringify({
         url: $("#url").value, mode: new FormData($("#download-form")).get("mode"), authorized: $("#authorized").checked,
         recipe_id: $("#recipe").value || "original", library_id: $("#library").value || "stash",
-        scheduled_at: null,
+        scheduled_at: null, allow_repeat: $("#allow-repeat").checked,
         max_items: maxItems, date_after: $("#date-after").value, date_before: $("#date-before").value
       })
     });
     message($("#message"), `Queued with ${result.engine}.`, true);
     $("#url").value = "";
     $("#authorized").checked = false;
+    $("#allow-repeat").checked = false;
     invalidatePreflight();
     await loadJobs();
   } catch (error) {
     message($("#message"), error.message);
-    button.disabled = !(preflightResult?.ready && $("#authorized").checked);
+    updateQueueState();
   }
 });
 

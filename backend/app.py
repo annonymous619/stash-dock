@@ -60,7 +60,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.8.2")
+app = FastAPI(title="Stash Dock", version="0.8.3")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -78,6 +78,7 @@ class DownloadRequest(BaseModel):
     max_items: int | None = Field(default=None, ge=1, le=10000)
     date_after: str = Field(default="", max_length=10)
     date_before: str = Field(default="", max_length=10)
+    allow_repeat: bool = False
 
 
 class PreflightRequest(BaseModel):
@@ -196,6 +197,15 @@ def active_job_for_url(connection: sqlite3.Connection, url: str) -> sqlite3.Row 
         """SELECT id,status FROM jobs WHERE url=?
            AND status IN ('queued','running','scheduled')
            ORDER BY created_at LIMIT 1""",
+        (url,),
+    ).fetchone()
+
+
+def completed_job_for_url(connection: sqlite3.Connection, url: str) -> sqlite3.Row | None:
+    return connection.execute(
+        """SELECT id,finished_at,engine,output_path FROM jobs
+           WHERE url=? AND status='completed'
+           ORDER BY COALESCE(finished_at,created_at) DESC LIMIT 1""",
         (url,),
     ).fetchone()
 
@@ -544,6 +554,7 @@ def process_job(job_id: str) -> None:
     if row["requested_mode"] == "auto":
         engines.append("yt-dlp" if first_engine == "gallery-dl" else "gallery-dl")
     success = False
+    archive_skip = False
     error = ""
     used_engine = first_engine
     for index, engine in enumerate(engines):
@@ -560,11 +571,17 @@ def process_job(job_id: str) -> None:
             break
         if code == 0 and not new_files:
             append_log(job_id, f"{engine} completed but produced no new files.")
+            if row["duplicate_of"]:
+                archive_skip = True
+                append_log(job_id, "No new media found; the download archive prevented duplicates.")
+                break
         else:
             append_log(job_id, f"{engine} exited with code {code}.")
         if index == 0 and len(engines) > 1:
             append_log(job_id, f"Trying fallback engine: {engines[1]}.")
-    status = "cancelled" if cancel_events[job_id].is_set() else ("completed" if success else "failed")
+    status = "cancelled" if cancel_events[job_id].is_set() else (
+        "completed" if success or archive_skip else "failed"
+    )
     if status == "failed":
         with db() as connection:
             failed_log = connection.execute(
@@ -584,15 +601,15 @@ def process_job(job_id: str) -> None:
                WHERE id=?""",
             (status, used_engine, int(time.time()), output, error, job_id),
         )
-    if status == "completed":
-        created = snapshot_files() - before
+    created = snapshot_files() - before if status == "completed" else set()
+    if status == "completed" and created:
         manifest = write_manifest(job_id, row, created)
         append_log(job_id, f"Metadata manifest written: {manifest.name}")
         with db() as connection:
             stats = index_paths(connection, DOWNLOAD_ROOT, [Path(item) for item in created])
         append_log(job_id, f"Duplicate analysis: {json.dumps(stats, sort_keys=True)}")
     settings = load_settings()
-    if (status == "completed" and settings.get("sync_enabled")
+    if (status == "completed" and created and settings.get("sync_enabled")
             and settings.get("api_key")
             and advanced_settings(settings)["feature_toggles"].get("stash_sync", True)):
         stash_queue.put(job_id)
@@ -715,6 +732,9 @@ def preflight(request: PreflightRequest) -> dict:
     result = inspect_link(
         url, host, mode, recipe_id, library_id, cookie_profile,
     )
+    with db() as connection:
+        previous = completed_job_for_url(connection, url)
+    previous_download = dict(previous) if previous else None
     count = result.get("item_count")
     warnings: list[str] = []
     if isinstance(count, int) and count >= 50:
@@ -727,6 +747,8 @@ def preflight(request: PreflightRequest) -> dict:
         **result, "url": url, "host": host, "site": site_name(host),
         "mode": mode, "recipe_id": recipe_id, "library_id": library_id,
         "rule_applied": bool(rule), "warnings": warnings,
+        "previous_download": previous_download,
+        "repeat_kind": "collection" if result.get("content_kind") == "collection" else "single",
     }
 
 
@@ -767,14 +789,23 @@ def create_job(request: DownloadRequest) -> dict:
                 raise HTTPException(
                     409, f"This URL is already {active['status']} as job {active['id']}."
                 )
+            previous = completed_job_for_url(connection, url)
+            if previous and not request.allow_repeat:
+                raise HTTPException(
+                    409,
+                    f"This exact URL already completed as job {previous['id']}. "
+                    "Run preflight and confirm that you want to check it again.",
+                )
             connection.execute(
                 """INSERT INTO jobs
                    (id,url,host,requested_mode,engine,status,created_at,recipe_id,
-                    library_id,cookie_profile,scheduled_at,max_items,date_after,date_before)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    library_id,cookie_profile,scheduled_at,max_items,date_after,date_before,
+                    duplicate_of)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (job_id, url, host, mode, engine, status, int(time.time()),
                  recipe_id, library_id, cookie_profile, request.scheduled_at,
-                 request.max_items, date_after, date_before),
+                 request.max_items, date_after, date_before,
+                 previous["id"] if previous else None),
             )
         cancel_events[job_id] = threading.Event()
         if not scheduled:
@@ -784,6 +815,7 @@ def create_job(request: DownloadRequest) -> dict:
         "rule_applied": bool(rule), "recipe_id": recipe_id,
         "library_id": library_id, "max_items": request.max_items,
         "date_after": date_after, "date_before": date_before,
+        "duplicate_of": previous["id"] if previous else None,
     }
 
 

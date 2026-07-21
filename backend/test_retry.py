@@ -130,6 +130,77 @@ class RetryJobTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.status_code, 409)
 
+    def test_completed_url_requires_explicit_history_confirmation(self):
+        self.insert_job(status="completed")
+        settings = {**app_module.DEFAULT_SETTINGS, "gallery_hosts": []}
+        request = app_module.DownloadRequest(
+            url="https://example.com/creator", authorized=True
+        )
+        with patch.object(app_module, "public_http_url", return_value=(
+            "https://example.com/creator", "example.com"
+        )), patch.object(app_module, "load_settings", return_value=settings):
+            with self.assertRaises(HTTPException) as raised:
+                app_module.create_job(request)
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("already completed", raised.exception.detail)
+
+    def test_confirmed_history_check_tracks_original_job(self):
+        self.insert_job(status="completed")
+        settings = {**app_module.DEFAULT_SETTINGS, "gallery_hosts": []}
+        request = app_module.DownloadRequest(
+            url="https://example.com/creator", authorized=True, allow_repeat=True
+        )
+        with patch.object(app_module, "public_http_url", return_value=(
+            "https://example.com/creator", "example.com"
+        )), patch.object(app_module, "load_settings", return_value=settings):
+            result = app_module.create_job(request)
+        with app_module.db() as connection:
+            repeated = connection.execute(
+                "SELECT duplicate_of FROM jobs WHERE id=?", (result["id"],)
+            ).fetchone()
+        self.assertEqual(result["duplicate_of"], "original123")
+        self.assertEqual(repeated["duplicate_of"], "original123")
+
+    def test_preflight_reports_completed_url_history(self):
+        self.insert_job(status="completed")
+        settings = {**app_module.DEFAULT_SETTINGS, "gallery_hosts": []}
+        inspected = {
+            "ready": True, "engine": "yt-dlp", "content_kind": "collection",
+            "title": "Creator uploads", "creator": "Creator", "item_count": 4,
+            "count_limited": False, "free_bytes": 1000, "destination": "/downloads",
+        }
+        with patch.object(app_module, "public_http_url", return_value=(
+            "https://example.com/creator", "example.com"
+        )), patch.object(app_module, "load_settings", return_value=settings), patch.object(
+            app_module, "inspect_link", return_value=inspected
+        ):
+            result = app_module.preflight(app_module.PreflightRequest(
+                url="https://example.com/creator"
+            ))
+        self.assertEqual(result["previous_download"]["id"], "original123")
+        self.assertEqual(result["repeat_kind"], "collection")
+
+    def test_archive_skip_completes_without_creating_duplicate_media(self):
+        self.insert_job(status="completed")
+        settings = {**app_module.DEFAULT_SETTINGS, "gallery_hosts": [], "api_key": ""}
+        request = app_module.DownloadRequest(
+            url="https://example.com/creator", authorized=True, allow_repeat=True
+        )
+        with patch.object(app_module, "public_http_url", return_value=(
+            "https://example.com/creator", "example.com"
+        )), patch.object(app_module, "load_settings", return_value=settings):
+            result = app_module.create_job(request)
+            with patch.object(app_module, "run_engine", return_value=0), patch.object(
+                app_module, "snapshot_files", return_value=set()
+            ):
+                app_module.process_job(result["id"])
+        with app_module.db() as connection:
+            repeated = connection.execute(
+                "SELECT status,log FROM jobs WHERE id=?", (result["id"],)
+            ).fetchone()
+        self.assertEqual(repeated["status"], "completed")
+        self.assertIn("archive prevented duplicates", repeated["log"])
+
 
 if __name__ == "__main__":
     unittest.main()

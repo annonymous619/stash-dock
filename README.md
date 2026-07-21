@@ -277,3 +277,13 @@ active. The recent-jobs queue replaces Retry with a disabled **Active** button
 until the existing job finishes. After a container restart, Stash Dock resumes
 one interrupted job per URL and marks extra active copies cancelled, preserving
 their logs instead of starting competing downloader processes.
+
+## 0.8.3 completed URL history
+
+Preflight now checks the complete job history for an exact URL that previously
+finished successfully. A history match is shown before queueing and requires an
+intentional confirmation. Creator and collection URLs remain reusable so they
+can discover later uploads, while the gallery-dl and yt-dlp archives skip items
+that were already saved. If every item is already archived, the history check
+completes as **no new media** rather than failing or falling back to another
+engine that could create duplicate files.
