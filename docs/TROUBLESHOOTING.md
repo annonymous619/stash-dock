@@ -54,6 +54,20 @@ changes can temporarily break extractors. Record the detected engine and full
 error from the job log, then try the manual gallery or video mode. Do not post
 account cookies or credentials.
 
+Run **Preflight** before queueing another attempt. Common codes mean:
+
+- `RATE_LIMITED`: wait before retrying; repeated requests can extend the block.
+- `ACCESS_BLOCKED`: the site refused the request; an authorized cookie profile
+  may be required.
+- `LOGIN_REQUIRED`: refresh the cookie file for the signed-in account.
+- `IMPERSONATION_REQUIRED`: rebuild or update the image so the bundled
+  browser-compatible networking support is current.
+- `UNSUPPORTED_URL`: try the other manual mode, then check whether either
+  downloader currently supports that exact page type.
+- `SITE_TIMEOUT`: the site did not answer within the preflight timeout.
+
+Preflight never bypasses login, paywall, DRM, or other access controls.
+
 ## Permission denied
 
 On Unraid, ensure the host media and appdata directories are writable by the

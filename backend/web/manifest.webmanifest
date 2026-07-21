@@ -4,6 +4,6 @@
   "description": "Smart media intake and library handoff",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f2f0e8",
-  "theme_color": "#10130f"
+  "background_color": "#071015",
+  "theme_color": "#071015"
 }

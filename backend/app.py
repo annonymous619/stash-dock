@@ -31,6 +31,10 @@ from advanced import (
     init_advanced_storage, load_plugins, match_rule, safe_library_root,
     storage_candidates,
 )
+from download_core import (
+    classify_failure, parse_gallery_preflight, parse_ytdlp_preflight,
+    selection_args, valid_date,
+)
 
 APP_ROOT = Path(__file__).resolve().parent
 WEB_ROOT = APP_ROOT / "web"
@@ -56,7 +60,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.6.0")
+app = FastAPI(title="Stash Dock", version="0.7.0")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -70,6 +74,16 @@ class DownloadRequest(BaseModel):
     recipe_id: str = Field(default="original", max_length=80)
     library_id: str = Field(default="stash", max_length=80)
     scheduled_at: int | None = Field(default=None, ge=0)
+    max_items: int | None = Field(default=None, ge=1, le=10000)
+    date_after: str = Field(default="", max_length=10)
+    date_before: str = Field(default="", max_length=10)
+
+
+class PreflightRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=4096)
+    mode: Literal["auto", "gallery", "video", "audio"] = "auto"
+    recipe_id: str = Field(default="original", max_length=80)
+    library_id: str = Field(default="stash", max_length=80)
 
 
 class AdvancedSettingsRequest(BaseModel):
@@ -246,7 +260,8 @@ def append_log(job_id: str, line: str) -> None:
 
 def job_command(engine: str, url: str, host: str, mode: str,
                 recipe_id: str = "original", library_id: str = "stash",
-                cookie_profile: str = "") -> list[str]:
+                cookie_profile: str = "", max_items: int | None = None,
+                date_after: str = "", date_before: str = "") -> list[str]:
     settings = load_settings()
     advanced = advanced_settings(settings)
     recipe = next((item for item in advanced["recipes"] if item.get("id") == recipe_id), advanced["recipes"][0])
@@ -261,6 +276,7 @@ def job_command(engine: str, url: str, host: str, mode: str,
         ]
         if cookies:
             command += ["--cookies", str(cookies)]
+        command += selection_args(engine, max_items, date_after, date_before)
         return command + [url]
     creator = (
         "%(uploader,channel,creator,artist,uploader_id,channel_id|"
@@ -283,6 +299,7 @@ def job_command(engine: str, url: str, host: str, mode: str,
     ]
     if cookies:
         command += ["--cookies", str(cookies)]
+    command += selection_args(engine, max_items, date_after, date_before)
     if mode == "audio":
         command += ["-x", "--audio-format", "mp3", "--audio-quality", "0"]
     elif recipe.get("format") not in {"best", "original", None}:
@@ -291,10 +308,69 @@ def job_command(engine: str, url: str, host: str, mode: str,
     return command
 
 
+def inspect_link(url: str, host: str, mode: str, recipe_id: str,
+                 library_id: str, cookie_profile: str) -> dict[str, Any]:
+    advanced = advanced_settings(load_settings())
+    root = safe_library_root(DOWNLOAD_ROOT, advanced, library_id)
+    cookies = cookie_file(CONFIG_ROOT, advanced, cookie_profile)
+    engine = choose_engine(host, url, mode)
+    if engine == "yt-dlp":
+        cap = 501
+        command = [
+            "yt-dlp", "--skip-download", "--flat-playlist",
+            "--dump-single-json", "--playlist-end", str(cap), "--no-warnings",
+        ]
+        if cookies:
+            command += ["--cookies", str(cookies)]
+        parser = lambda output: parse_ytdlp_preflight(output, cap)
+    else:
+        cap = 101
+        command = [
+            "gallery-dl", "--config", str(CONFIG_ROOT / "gallery-dl.conf"),
+            "--simulate", "--dump-json", "--range", f"1-{cap}",
+        ]
+        if cookies:
+            command += ["--cookies", str(cookies)]
+        parser = lambda output: parse_gallery_preflight(output, cap)
+    try:
+        result = subprocess.run(
+            command + [url], capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+    except subprocess.TimeoutExpired:
+        failure = classify_failure("preflight timed out")
+        return {"ready": False, "engine": engine, "failure": failure}
+    combined = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    if result.returncode != 0:
+        failure = classify_failure(combined)
+        return {
+            "ready": False, "engine": engine, "failure": failure,
+            "details": "\n".join(combined.splitlines()[-12:]),
+        }
+    try:
+        metadata = parser(result.stdout)
+    except (ValueError, json.JSONDecodeError, IndexError) as exc:
+        metadata = {
+            "title": "", "creator": "", "item_count": None,
+            "count_limited": False, "content_kind": "unknown",
+        }
+        metadata["parse_note"] = str(exc)
+    usage = shutil.disk_usage(root)
+    return {
+        "ready": True, "engine": engine,
+        "fallback_engine": "gallery-dl" if engine == "yt-dlp" else "yt-dlp",
+        "destination": str(root), "free_bytes": usage.free,
+        "cookie_profile": cookie_profile or "", **metadata,
+    }
+
+
 def run_engine(job_id: str, engine: str, url: str, host: str, mode: str,
-               recipe_id: str, library_id: str, cookie_profile: str) -> int:
+               recipe_id: str, library_id: str, cookie_profile: str,
+               max_items: int | None = None, date_after: str = "",
+               date_before: str = "") -> int:
     command = job_command(
-        engine, url, host, mode, recipe_id, library_id, cookie_profile
+        engine, url, host, mode, recipe_id, library_id, cookie_profile,
+        max_items, date_after, date_before,
     )
     append_log(job_id, f"Using {engine}: {shlex.join(command[:-1])} [URL]")
     process = subprocess.Popen(
@@ -428,7 +504,8 @@ def process_job(job_id: str) -> None:
         used_engine = engine
         code = run_engine(job_id, engine, row["url"], row["host"], row["requested_mode"],
                           row["recipe_id"] or "original", row["library_id"] or "stash",
-                          row["cookie_profile"] or "")
+                          row["cookie_profile"] or "", row["max_items"],
+                          row["date_after"] or "", row["date_before"] or "")
         new_files = snapshot_files() - before
         if code == 0 and new_files:
             success = True
@@ -441,7 +518,12 @@ def process_job(job_id: str) -> None:
             append_log(job_id, f"Trying fallback engine: {engines[1]}.")
     status = "cancelled" if cancel_events[job_id].is_set() else ("completed" if success else "failed")
     if status == "failed":
-        error = "Neither downloader produced a new file. The site may require cookies, block automation, or be unsupported."
+        with db() as connection:
+            failed_log = connection.execute(
+                "SELECT log FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        failure = classify_failure(failed_log["log"] if failed_log else "")
+        error = f"{failure['code']}: {failure['message']}"
     labels = load_settings().get("site_labels", {})
     output_site = labels.get(
         site_name(row["host"]),
@@ -572,6 +654,33 @@ def list_jobs() -> list[dict]:
     return [dict(row) for row in rows]
 
 
+@app.post("/api/preflight")
+def preflight(request: PreflightRequest) -> dict:
+    url, host = public_http_url(request.url)
+    advanced = advanced_settings(load_settings())
+    rule = match_rule(advanced, host, url, request.mode)
+    mode = str(rule.get("force_mode", request.mode))
+    recipe_id = str(rule.get("recipe_id", request.recipe_id))
+    library_id = str(rule.get("library_id", request.library_id))
+    cookie_profile = str(rule.get("cookie_profile", ""))
+    result = inspect_link(
+        url, host, mode, recipe_id, library_id, cookie_profile,
+    )
+    count = result.get("item_count")
+    warnings: list[str] = []
+    if isinstance(count, int) and count >= 50:
+        warnings.append(f"Large collection detected: {count} items. Consider setting a limit.")
+    if result.get("count_limited"):
+        warnings.append(f"Preflight stopped counting at {count}; the collection may be larger.")
+    if not cookie_profile and not result.get("ready") and result.get("failure", {}).get("code") in {"ACCESS_BLOCKED", "LOGIN_REQUIRED"}:
+        warnings.append("A valid cookie profile may be required for this site.")
+    return {
+        **result, "url": url, "host": host, "site": site_name(host),
+        "mode": mode, "recipe_id": recipe_id, "library_id": library_id,
+        "rule_applied": bool(rule), "warnings": warnings,
+    }
+
+
 @app.post("/api/jobs", status_code=202)
 def create_job(request: DownloadRequest) -> dict:
     if not request.authorized:
@@ -585,6 +694,13 @@ def create_job(request: DownloadRequest) -> dict:
         raise HTTPException(400, "Audio mode is disabled.")
     if request.scheduled_at and not toggles.get("schedules", True):
         raise HTTPException(400, "Scheduled downloads are disabled.")
+    try:
+        date_after = valid_date(request.date_after)
+        date_before = valid_date(request.date_before)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if date_after and date_before and date_after > date_before:
+        raise HTTPException(400, "The after date must be earlier than the before date.")
     rule = match_rule(advanced, host, url, request.mode)
     mode = str(rule.get("force_mode", request.mode))
     recipe_id = str(rule.get("recipe_id", request.recipe_id))
@@ -600,17 +716,19 @@ def create_job(request: DownloadRequest) -> dict:
         connection.execute(
             """INSERT INTO jobs
                (id,url,host,requested_mode,engine,status,created_at,recipe_id,
-                library_id,cookie_profile,scheduled_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                library_id,cookie_profile,scheduled_at,max_items,date_after,date_before)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (job_id, url, host, mode, engine, status, int(time.time()),
-             recipe_id, library_id, cookie_profile, request.scheduled_at),
+             recipe_id, library_id, cookie_profile, request.scheduled_at,
+             request.max_items, date_after, date_before),
         )
     if not scheduled:
         jobs_queue.put(job_id)
     return {
         "id": job_id, "engine": engine, "status": status,
         "rule_applied": bool(rule), "recipe_id": recipe_id,
-        "library_id": library_id,
+        "library_id": library_id, "max_items": request.max_items,
+        "date_after": date_after, "date_before": date_before,
     }
 
 

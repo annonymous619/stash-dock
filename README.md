@@ -31,6 +31,10 @@ time enjoying a tidy library.
 - Connection test, manual sync, and redacted diagnostics export
 - A generated, revocable integration key for other Docker apps and automations
 - Persistent history and duplicate-download archives
+- Preflight inspection before queueing, including engine, creator, collection
+  size, destination, free space, and clear access-error categories
+- Per-job item and date limits for large creator or playlist downloads
+- Three device-local WebUI themes with a collapsible, filterable live log panel
 
 ## A little personality for every creator
 
@@ -212,3 +216,28 @@ filesystem permissions, and reference only its filename:
 The authorization switch remains a hard API requirement. The WebUI will not submit
 an off switch, and direct clients receive HTTP 400 unless they send
 `"authorized": true`.
+
+## 0.7 preflight and themed workspace
+
+Version 0.7 separates inspection from downloading. Pasting a link and selecting
+**Preflight** does not save media. It asks the selected engine for lightweight
+metadata and reports the likely creator, item count, destination, available disk
+space, routing rule, and any access problem. A job can be queued only after the
+preflight succeeds and the authorization switch is enabled.
+
+Large collections can be limited to the latest 10, 25, 50, or a custom number of
+items. Optional after/before dates are passed to the active downloader when that
+engine supports date filtering. Preflight counting is deliberately capped, so a
+count ending in `+` means the source may contain more items.
+
+The redesigned WebUI includes three selectable themes under **Settings → Look and
+feel**:
+
+- **Midnight Operations Console** for a dense download dashboard
+- **Midnight Media Workspace** for a spacious, mobile-first layout
+- **Command Rail** for a compact layout with persistent right-side logs
+
+The theme preference is saved in that browser only. Server-side settings, jobs,
+recipes, libraries, and Stash synchronization remain shared between devices.
+Live logs can be opened from the sidebar, mobile header, queue header, or an
+individual job, then filtered to warnings, downloader output, or Stash activity.
