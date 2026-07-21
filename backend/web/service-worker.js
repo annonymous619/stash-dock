@@ -1,5 +1,5 @@
-const CACHE = "stash-dock-0.8.1";
-const SHELL = ["/", "/assets/app.css?v=0.8.1", "/assets/app.js?v=0.8.1", "/manifest.webmanifest"];
+const CACHE = "stash-dock-0.8.2";
+const SHELL = ["/", "/assets/app.css?v=0.8.2", "/assets/app.js?v=0.8.2", "/manifest.webmanifest"];
 self.addEventListener("install", event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())));
 self.addEventListener("activate", event => event.waitUntil(Promise.all([
   caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))),

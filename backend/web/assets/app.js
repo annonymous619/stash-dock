@@ -96,12 +96,22 @@ function jobLabel(job) {
   return `${job.status.toUpperCase()} · ${source}`;
 }
 
+function retryAction(job) {
+  if (!["failed", "cancelled"].includes(job.status) || !/^https?:/.test(job.url)) return "";
+  const active = jobsCache.find(item =>
+    item.url === job.url && ["queued", "running", "scheduled"].includes(item.status)
+  );
+  return active
+    ? `<button class="quiet retry" disabled title="Already ${esc(active.status)} as ${esc(active.id)}">Active</button>`
+    : `<button class="quiet retry" data-id="${esc(job.id)}">Retry</button>`;
+}
+
 function renderJobs() {
   $("#job-list").innerHTML = jobsCache.length ? jobsCache.map(job => `
     <article class="job">
       <span class="status ${esc(job.status)}">${esc(job.status)}</span>
       <div><p class="job-url">${esc(job.url)}</p><p class="meta">${esc(job.engine)} · ${esc(job.host)} · ${new Date(job.created_at * 1000).toLocaleString()}${job.retried_from ? ` · Retry of ${esc(job.retried_from)}` : ""}</p>${job.error ? `<p class="message">${esc(job.error)}</p>` : ""}</div>
-      <div class="job-actions">${["failed", "cancelled"].includes(job.status) && /^https?:/.test(job.url) ? `<button class="quiet retry" data-id="${esc(job.id)}">Retry</button>` : ""}${["queued", "running", "scheduled"].includes(job.status) ? `<button class="quiet cancel" data-id="${esc(job.id)}">Cancel</button>` : ""}<button class="quiet view-log" data-id="${esc(job.id)}">View logs</button></div>
+      <div class="job-actions">${retryAction(job)}${["queued", "running", "scheduled"].includes(job.status) ? `<button class="quiet cancel" data-id="${esc(job.id)}">Cancel</button>` : ""}<button class="quiet view-log" data-id="${esc(job.id)}">View logs</button></div>
     </article>`).join("") : '<p class="empty">No downloads yet. Paste a link above to begin.</p>';
 
   const selected = $("#log-job").value;

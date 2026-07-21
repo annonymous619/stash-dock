@@ -268,3 +268,12 @@ library, cookie profile, item limit, and date filters. The new record links back
 to the failed job so its history and logs remain available. Completed downloads
 cannot be retried accidentally, and every retry still requires an explicit
 authorization confirmation through the API.
+
+## 0.8.2 duplicate retry protection
+
+Only one queued, running, or scheduled job may exist for an exact source URL.
+Both new-download and retry requests return HTTP 409 when that URL is already
+active. The recent-jobs queue replaces Retry with a disabled **Active** button
+until the existing job finishes. After a container restart, Stash Dock resumes
+one interrupted job per URL and marks extra active copies cancelled, preserving
+their logs instead of starting competing downloader processes.

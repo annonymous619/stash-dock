@@ -60,11 +60,12 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.8.1")
+app = FastAPI(title="Stash Dock", version="0.8.2")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
 cancel_events: dict[str, threading.Event] = {}
+job_submission_lock = threading.Lock()
 
 
 class DownloadRequest(BaseModel):
@@ -188,6 +189,49 @@ def db() -> sqlite3.Connection:
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def active_job_for_url(connection: sqlite3.Connection, url: str) -> sqlite3.Row | None:
+    return connection.execute(
+        """SELECT id,status FROM jobs WHERE url=?
+           AND status IN ('queued','running','scheduled')
+           ORDER BY created_at LIMIT 1""",
+        (url,),
+    ).fetchone()
+
+
+def recover_active_jobs() -> dict[str, int]:
+    """Resume one job per URL after restart and suppress stale duplicates."""
+    resumed = cancelled = 0
+    seen_urls: set[str] = set()
+    with db() as connection:
+        rows = connection.execute(
+            """SELECT id,url,status FROM jobs
+               WHERE status IN ('queued','running','scheduled')
+               ORDER BY created_at,id"""
+        ).fetchall()
+        for row in rows:
+            if row["url"] in seen_urls:
+                connection.execute(
+                    """UPDATE jobs SET status='cancelled',finished_at=?,
+                       error='Duplicate active job suppressed during startup recovery.'
+                       WHERE id=?""",
+                    (int(time.time()), row["id"]),
+                )
+                cancelled += 1
+                continue
+            seen_urls.add(row["url"])
+            if row["status"] == "scheduled":
+                continue
+            connection.execute(
+                """UPDATE jobs SET status='queued',started_at=NULL,finished_at=NULL,
+                   error=NULL WHERE id=?""",
+                (row["id"],),
+            )
+            cancel_events[row["id"]] = threading.Event()
+            jobs_queue.put(row["id"])
+            resumed += 1
+    return {"resumed": resumed, "cancelled_duplicates": cancelled}
 
 
 def init_storage() -> None:
@@ -619,6 +663,7 @@ def stash_worker() -> None:
 @app.on_event("startup")
 def startup() -> None:
     init_storage()
+    recover_active_jobs()
     threading.Thread(target=worker, daemon=True, name="download-worker").start()
     threading.Thread(target=schedule_worker, daemon=True, name="schedule-worker").start()
     threading.Thread(target=stash_worker, daemon=True, name="stash-worker").start()
@@ -713,21 +758,27 @@ def create_job(request: DownloadRequest) -> dict:
     safe_library_root(DOWNLOAD_ROOT, advanced, library_id)
     engine = choose_engine(host, url, mode)
     job_id = uuid.uuid4().hex[:12]
-    cancel_events[job_id] = threading.Event()
     scheduled = bool(request.scheduled_at and request.scheduled_at > int(time.time()))
     status = "scheduled" if scheduled else "queued"
-    with db() as connection:
-        connection.execute(
-            """INSERT INTO jobs
-               (id,url,host,requested_mode,engine,status,created_at,recipe_id,
-                library_id,cookie_profile,scheduled_at,max_items,date_after,date_before)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (job_id, url, host, mode, engine, status, int(time.time()),
-             recipe_id, library_id, cookie_profile, request.scheduled_at,
-             request.max_items, date_after, date_before),
-        )
-    if not scheduled:
-        jobs_queue.put(job_id)
+    with job_submission_lock:
+        with db() as connection:
+            active = active_job_for_url(connection, url)
+            if active:
+                raise HTTPException(
+                    409, f"This URL is already {active['status']} as job {active['id']}."
+                )
+            connection.execute(
+                """INSERT INTO jobs
+                   (id,url,host,requested_mode,engine,status,created_at,recipe_id,
+                    library_id,cookie_profile,scheduled_at,max_items,date_after,date_before)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (job_id, url, host, mode, engine, status, int(time.time()),
+                 recipe_id, library_id, cookie_profile, request.scheduled_at,
+                 request.max_items, date_after, date_before),
+            )
+        cancel_events[job_id] = threading.Event()
+        if not scheduled:
+            jobs_queue.put(job_id)
     return {
         "id": job_id, "engine": engine, "status": status,
         "rule_applied": bool(rule), "recipe_id": recipe_id,
@@ -745,7 +796,8 @@ def cancel_job(job_id: str) -> dict:
     with db() as connection:
         connection.execute(
             """UPDATE jobs SET status='cancelled',finished_at=?
-               WHERE id=? AND status='scheduled'""", (int(time.time()), job_id)
+               WHERE id=? AND status IN ('queued','scheduled')""",
+            (int(time.time()), job_id),
         )
     return {"id": job_id, "status": "cancelling"}
 
@@ -780,22 +832,28 @@ def retry_job(job_id: str, request: RetryRequest) -> dict:
 
     retry_id = uuid.uuid4().hex[:12]
     engine = choose_engine(host, url, mode)
-    cancel_events[retry_id] = threading.Event()
-    with db() as connection:
-        connection.execute(
-            """INSERT INTO jobs
-               (id,url,host,requested_mode,engine,status,created_at,recipe_id,
-                library_id,cookie_profile,scheduled_at,max_items,date_after,date_before,
-                retried_from)
-               VALUES (?,?,?,?,?,'queued',?,?,?,?,?,?,?,?,?)""",
-            (
-                retry_id, url, host, mode, engine, int(time.time()), recipe_id,
-                library_id, cookie_profile, None, original["max_items"],
-                original["date_after"] or "", original["date_before"] or "", job_id,
-            ),
-        )
-    append_log(retry_id, f"Retry of job {job_id}; original settings preserved.")
-    jobs_queue.put(retry_id)
+    with job_submission_lock:
+        with db() as connection:
+            active = active_job_for_url(connection, url)
+            if active:
+                raise HTTPException(
+                    409, f"This URL is already {active['status']} as job {active['id']}."
+                )
+            connection.execute(
+                """INSERT INTO jobs
+                   (id,url,host,requested_mode,engine,status,created_at,recipe_id,
+                    library_id,cookie_profile,scheduled_at,max_items,date_after,date_before,
+                    retried_from)
+                   VALUES (?,?,?,?,?,'queued',?,?,?,?,?,?,?,?,?)""",
+                (
+                    retry_id, url, host, mode, engine, int(time.time()), recipe_id,
+                    library_id, cookie_profile, None, original["max_items"],
+                    original["date_after"] or "", original["date_before"] or "", job_id,
+                ),
+            )
+        cancel_events[retry_id] = threading.Event()
+        append_log(retry_id, f"Retry of job {job_id}; original settings preserved.")
+        jobs_queue.put(retry_id)
     return {
         "id": retry_id, "retried_from": job_id, "engine": engine,
         "status": "queued", "recipe_id": recipe_id, "library_id": library_id,
