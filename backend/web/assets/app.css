@@ -159,6 +159,7 @@ textarea { resize: vertical; font: 12px var(--mono); }
 .job pre { max-height: 220px; overflow: auto; padding: 13px; border: 1px solid var(--line); background: #070a0d; white-space: pre-wrap; font: 11px/1.55 var(--mono); }
 .job-actions { display: flex; gap: 7px; align-items: center; justify-content: flex-end; }
 .job-actions .quiet { white-space: nowrap; }
+.job-actions .retry { border-color: color-mix(in srgb, var(--accent-2) 65%, var(--line)); color: var(--accent-2); }
 .empty { padding: 24px 0; color: var(--muted); }
 
 .page-intro { max-width: 760px; padding: 35px 0 24px; }

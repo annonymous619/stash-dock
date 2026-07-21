@@ -120,7 +120,7 @@ def init_advanced_storage(connection: sqlite3.Connection) -> None:
         ("recipe_id", "TEXT"), ("library_id", "TEXT"),
         ("cookie_profile", "TEXT"), ("scheduled_at", "INTEGER"),
         ("max_items", "INTEGER"), ("date_after", "TEXT"),
-        ("date_before", "TEXT"),
+        ("date_before", "TEXT"), ("retried_from", "TEXT"),
     ):
         if name not in columns:
             connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")

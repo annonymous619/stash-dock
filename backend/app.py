@@ -60,7 +60,7 @@ VIDEO_HOST_HINTS = {
     "pornhub.com", "xvideos.com", "xnxx.com", "redgifs.com",
 }
 
-app = FastAPI(title="Stash Dock", version="0.8.0")
+app = FastAPI(title="Stash Dock", version="0.8.1")
 app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
 jobs_queue: queue.Queue[str] = queue.Queue()
 stash_queue: queue.Queue[str] = queue.Queue()
@@ -84,6 +84,10 @@ class PreflightRequest(BaseModel):
     mode: Literal["auto", "gallery", "video", "audio"] = "auto"
     recipe_id: str = Field(default="original", max_length=80)
     library_id: str = Field(default="stash", max_length=80)
+
+
+class RetryRequest(BaseModel):
+    authorized: bool
 
 
 class AdvancedSettingsRequest(BaseModel):
@@ -744,6 +748,60 @@ def cancel_job(job_id: str) -> dict:
                WHERE id=? AND status='scheduled'""", (int(time.time()), job_id)
         )
     return {"id": job_id, "status": "cancelling"}
+
+
+@app.post("/api/jobs/{job_id}/retry", status_code=202)
+def retry_job(job_id: str, request: RetryRequest) -> dict:
+    if not request.authorized:
+        raise HTTPException(400, "Confirm that you are authorized to save this media.")
+    with db() as connection:
+        original = connection.execute(
+            "SELECT * FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+    if not original:
+        raise HTTPException(404, "Job not found.")
+    if original["status"] not in {"failed", "cancelled"}:
+        raise HTTPException(409, "Only failed or cancelled downloads can be retried.")
+    if not str(original["url"]).startswith(("http://", "https://")):
+        raise HTTPException(400, "This job type cannot be retried as a download.")
+
+    url, host = public_http_url(original["url"])
+    advanced = advanced_settings(load_settings())
+    toggles = advanced.get("feature_toggles", {})
+    if not toggles.get("downloads", True):
+        raise HTTPException(503, "Downloads are disabled by the administrator.")
+    mode = original["requested_mode"] or "auto"
+    if mode == "audio" and not toggles.get("audio_mode", True):
+        raise HTTPException(400, "Audio mode is disabled.")
+    recipe_id = original["recipe_id"] or "original"
+    library_id = original["library_id"] or "stash"
+    cookie_profile = original["cookie_profile"] or ""
+    safe_library_root(DOWNLOAD_ROOT, advanced, library_id)
+
+    retry_id = uuid.uuid4().hex[:12]
+    engine = choose_engine(host, url, mode)
+    cancel_events[retry_id] = threading.Event()
+    with db() as connection:
+        connection.execute(
+            """INSERT INTO jobs
+               (id,url,host,requested_mode,engine,status,created_at,recipe_id,
+                library_id,cookie_profile,scheduled_at,max_items,date_after,date_before,
+                retried_from)
+               VALUES (?,?,?,?,?,'queued',?,?,?,?,?,?,?,?,?)""",
+            (
+                retry_id, url, host, mode, engine, int(time.time()), recipe_id,
+                library_id, cookie_profile, None, original["max_items"],
+                original["date_after"] or "", original["date_before"] or "", job_id,
+            ),
+        )
+    append_log(retry_id, f"Retry of job {job_id}; original settings preserved.")
+    jobs_queue.put(retry_id)
+    return {
+        "id": retry_id, "retried_from": job_id, "engine": engine,
+        "status": "queued", "recipe_id": recipe_id, "library_id": library_id,
+        "max_items": original["max_items"], "date_after": original["date_after"] or "",
+        "date_before": original["date_before"] or "",
+    }
 
 
 @app.post("/api/stash/sync", status_code=202)

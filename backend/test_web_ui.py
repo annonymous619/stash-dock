@@ -16,9 +16,14 @@ class WebUiTests(unittest.TestCase):
     def test_asset_and_service_worker_versions_match(self):
         html = (WEB / "index.html").read_text(encoding="utf-8")
         worker = (WEB / "service-worker.js").read_text(encoding="utf-8")
-        self.assertIn("app.css?v=0.8.0", html)
-        self.assertIn("app.js?v=0.8.0", html)
-        self.assertIn('CACHE = "stash-dock-0.8"', worker)
+        self.assertIn("app.css?v=0.8.1", html)
+        self.assertIn("app.js?v=0.8.1", html)
+        self.assertIn('CACHE = "stash-dock-0.8.1"', worker)
+
+    def test_failed_jobs_offer_retry(self):
+        script = (WEB / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('class="quiet retry"', script)
+        self.assertIn('/retry`', script)
 
 
 if __name__ == "__main__":

@@ -259,3 +259,12 @@ changing the complete visual palette:
 An always-visible theme selector applies the choice immediately. Versioned CSS and
 JavaScript assets plus a new service-worker cache prevent an older installed WebUI
 from masking theme updates after an upgrade.
+
+## 0.8.1 safe job retry
+
+Failed and cancelled downloads now show a **Retry** button in the recent-jobs
+queue. Retrying creates a new job and preserves the original mode, recipe,
+library, cookie profile, item limit, and date filters. The new record links back
+to the failed job so its history and logs remain available. Completed downloads
+cannot be retried accidentally, and every retry still requires an explicit
+authorization confirmation through the API.

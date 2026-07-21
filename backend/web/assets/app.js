@@ -100,8 +100,8 @@ function renderJobs() {
   $("#job-list").innerHTML = jobsCache.length ? jobsCache.map(job => `
     <article class="job">
       <span class="status ${esc(job.status)}">${esc(job.status)}</span>
-      <div><p class="job-url">${esc(job.url)}</p><p class="meta">${esc(job.engine)} · ${esc(job.host)} · ${new Date(job.created_at * 1000).toLocaleString()}</p>${job.error ? `<p class="message">${esc(job.error)}</p>` : ""}</div>
-      <div class="job-actions">${["queued", "running", "scheduled"].includes(job.status) ? `<button class="quiet cancel" data-id="${esc(job.id)}">Cancel</button>` : ""}<button class="quiet view-log" data-id="${esc(job.id)}">View logs</button></div>
+      <div><p class="job-url">${esc(job.url)}</p><p class="meta">${esc(job.engine)} · ${esc(job.host)} · ${new Date(job.created_at * 1000).toLocaleString()}${job.retried_from ? ` · Retry of ${esc(job.retried_from)}` : ""}</p>${job.error ? `<p class="message">${esc(job.error)}</p>` : ""}</div>
+      <div class="job-actions">${["failed", "cancelled"].includes(job.status) && /^https?:/.test(job.url) ? `<button class="quiet retry" data-id="${esc(job.id)}">Retry</button>` : ""}${["queued", "running", "scheduled"].includes(job.status) ? `<button class="quiet cancel" data-id="${esc(job.id)}">Cancel</button>` : ""}<button class="quiet view-log" data-id="${esc(job.id)}">View logs</button></div>
     </article>`).join("") : '<p class="empty">No downloads yet. Paste a link above to begin.</p>';
 
   const selected = $("#log-job").value;
@@ -170,6 +170,19 @@ document.addEventListener("keydown", event => { if (event.key === "Escape") clos
 $("#job-list").addEventListener("click", async event => {
   const logButton = event.target.closest(".view-log");
   if (logButton) return openLogs(logButton.dataset.id);
+  const retryButton = event.target.closest(".retry");
+  if (retryButton) {
+    retryButton.disabled = true;
+    try {
+      const result = await api(`/api/jobs/${retryButton.dataset.id}/retry`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authorized: true })
+      });
+      message($("#message"), `Retry queued with ${result.engine}.`, true);
+    } catch (error) { message($("#message"), error.message); }
+    await loadJobs();
+    return;
+  }
   const button = event.target.closest(".cancel");
   if (!button) return;
   button.disabled = true;
